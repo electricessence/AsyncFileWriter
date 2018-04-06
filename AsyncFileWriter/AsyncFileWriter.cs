@@ -1,21 +1,24 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : ITargetBlock<byte[]>, IDisposable
+	public class AsyncFileWriter : ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>, IDisposable
 	{
 		public readonly string FilePath;
+		public readonly Encoding Encoding;
 		readonly BufferBlock<byte[]> _buffer;
 		Task<Task> _writerCompletion;
 
-		public AsyncFileWriter(string filePath)
+		public AsyncFileWriter(string filePath, Encoding ecoding = null)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
+			Encoding = ecoding ?? Encoding.UTF8;
 			_buffer = new BufferBlock<byte[]>();
 			Completion = CreateCompletion();
 		}
@@ -100,9 +103,18 @@ namespace Open
 			return status;
 		}
 
+		// Might be able to build a proxy to translate the source block to the proper values and allow consumption.
+		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
+			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
+
+		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, string messageValue, ISourceBlock<string> source, bool consumeToAccept)
+			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
+
 		public void Fault(Exception exception)
 		{
 			((ITargetBlock<byte[]>)_buffer).Fault(exception);
 		}
+
+
 	}
 }
