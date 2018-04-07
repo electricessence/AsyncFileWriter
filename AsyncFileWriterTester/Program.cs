@@ -71,6 +71,7 @@ namespace AsyncFileWriterTester
 				if (writer.Completion.IsFaulted)
 					throw writer.Completion.Exception;
 			}
+
 			Console.WriteLine($"Total Time: {sw.Elapsed.TotalSeconds} seconds");
 
 			int bytes = 0;
