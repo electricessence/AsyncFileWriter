@@ -12,96 +12,93 @@ namespace Open
 	{
 		public readonly string FilePath;
 		public readonly Encoding Encoding;
-		readonly BufferBlock<byte[]> _buffer;
-		Task<Task> _writerCompletion;
+		public readonly int BoundedCapacity;
+		readonly ActionBlock<byte[]> _writer;
+		Lazy<FileStream> _fileStream;
+		bool _completeCalled; // Need to allow for 
 
-		public AsyncFileWriter(string filePath, Encoding ecoding = null)
+		public AsyncFileWriter(string filePath, int boundedCapacity = -1, Encoding encoding = null)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
-			Encoding = ecoding ?? Encoding.UTF8;
-			_buffer = new BufferBlock<byte[]>();
-			Completion = CreateCompletion();
+			BoundedCapacity = boundedCapacity;
+			Encoding = encoding ?? Encoding.UTF8;
+
+			_writer = new ActionBlock<byte[]>(async bytes =>
+			{
+				await GetFileStream().Value.WriteAsync(bytes, 0, bytes.Length);
+				if (_writer.InputCount == 0) OnWriterEmpty();
+			},
+			new ExecutionDataflowBlockOptions
+			{
+				BoundedCapacity = boundedCapacity
+			});
+
+			_writer.Completion
+				.ContinueWith(OnWriterEmpty);
 		}
 
+		public AsyncFileWriter(string filePath, Encoding encoding, int boundedCapacity = -1) : this(filePath, boundedCapacity, encoding)
+		{
+
+		}
+
+		/// <summary>
+		/// Signals completion and waits for all bytes to be written to the destination.
+		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
+		/// </summary>
 		public void Dispose()
 		{
 			Complete();
-			Completion.ContinueWith(t => { /* Ignore fault */ }).Wait();
+			_writer.Completion
+				.ContinueWith(t => { /* Ignore fault */ })
+				.Wait();
 		}
 
-		// Allow propagation of faults.
-		Task CreateCompletion()
-			=> _buffer
-			.Completion
-			.ContinueWith(
-				t1 => _writerCompletion
-					?.Unwrap()
-					?.ContinueWith(t2 => _buffer.Completion).Unwrap()
-					?? _buffer.Completion)
-			.Unwrap();
+		/// <summary>
+		/// The task that indicates completion.
+		/// </summary>
+		public Task Completion => _writer.Completion;
 
-		public void Complete() => _buffer.Complete();
+		/// <summary>
+		/// Signals that no more bytes should be accepted and signal completion once all the bytes have been written.
+		/// </summary>
+		public void Complete() => _completeCalled = true;
 
-		public Task Completion { get; private set; }
-
-		Task InitWriter()
+		/// <summary>
+		/// Stops all processing of bytes and signals completion.
+		/// </summary>
+		public void CompleteImmediate()
 		{
-			FileStream fs = null;
-			try
+			Complete();
+			_writer.Complete();
+		}
+
+		Lazy<FileStream> GetFileStream()
+		{
+			return LazyInitializer.EnsureInitialized(ref _fileStream, () => new Lazy<FileStream>(() =>
 			{
 				Debug.WriteLine($"Initializing FileStream: {FilePath}");
-				fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true);
-
-				IDisposable link = null;
-				ActionBlock<byte[]> writer = null;
-				writer = new ActionBlock<byte[]>(async bytes =>
-				{
-					await fs.WriteAsync(bytes, 0, bytes.Length);
-					if (_buffer.Count == 0 && writer.InputCount == 0)
-					{
-						link.Dispose(); // Unlink immediately...
-						writer.Complete();
-					}
-				});
-
-				link = _buffer.LinkTo(writer, new DataflowLinkOptions { PropagateCompletion = true }); // Begin consumption immediately...
-
-				return writer.Completion.ContinueWith(t =>
-				{
-					link.Dispose();
-					if (t.IsFaulted) Fault(t.Exception);
-					Debug.WriteLine($"Disposing FileStream. {FilePath}");
-					fs.Dispose();
-					Interlocked.Exchange(ref _writerCompletion, null);
-					EnsureWriter();
-				});
-			}
-			catch
-			{
-				Debug.WriteLine($"Initializing FileStream FAILED");
-				fs?.Dispose();
-				Interlocked.Exchange(ref _writerCompletion, null); // Allow for retrying...
-				throw;
-			}
+				return new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true);
+			}));
 		}
 
-		void EnsureWriter()
+		void OnWriterEmpty(Task task = null)
 		{
-			if (_buffer.Count != 0)
+			if (_completeCalled)
+				_writer.Complete();
+
+			var fs = Interlocked.Exchange(ref _fileStream, null);
+			if (fs?.IsValueCreated ?? false)
 			{
-				Task<Task> t = null;
-				var task = LazyInitializer.EnsureInitialized(ref _writerCompletion,
-					() => t = new Task<Task>(InitWriter));
-				if (task == t) task.Start();  // Are we the thread/task that is the creator?
+				Debug.WriteLine($"Disposing FileStream: {FilePath}");
+				fs.Value.Dispose(); // Just in case...
 			}
 		}
 
 		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, byte[] messageValue, ISourceBlock<byte[]> source, bool consumeToAccept)
-		{
-			var status = ((ITargetBlock<byte[]>)_buffer).OfferMessage(messageHeader, messageValue, source, consumeToAccept);
-			if (status == DataflowMessageStatus.Accepted) EnsureWriter();
-			return status;
-		}
+			=> _completeCalled
+				? DataflowMessageStatus.DecliningPermanently
+				: ((ITargetBlock<byte[]>)_writer).OfferMessage(messageHeader, messageValue, source, consumeToAccept);
 
 		// Might be able to build a proxy to translate the source block to the proper values and allow consumption.
 		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
@@ -112,9 +109,10 @@ namespace Open
 
 		public void Fault(Exception exception)
 		{
-			((ITargetBlock<byte[]>)_buffer).Fault(exception);
+			((ITargetBlock<byte[]>)_writer).Fault(exception);
 		}
 
-
+		public bool PostLine(string line = null)
+			=> this.Post((line ?? string.Empty) + '\n');
 	}
 }

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 
@@ -19,32 +20,27 @@ namespace AsyncFileWriterTester
 			File.Delete(filePath); // Start from scratch. (comment out for further appends.)
 
 			Console.WriteLine($"Writing to file: {filePath}");
-			using (var writer = new AsyncFileWriter(filePath))
+			using (var writer = new AsyncFileWriter(filePath, 10000000))
 			{
-
-				// Test to ensure blocks are linkable and properly pass messages.
-				var buffer = new TransformBlock<string, byte[]>(
-					value=>Encoding.UTF8.GetBytes(value +'\n'),
-					new ExecutionDataflowBlockOptions {
-						BoundedCapacity = 200000 // Test a max pre-buffered amount here.
-					});
-
-				buffer.LinkTo(writer, new DataflowLinkOptions { PropagateCompletion = true });
-				writer.Completion.ContinueWith(t => {
-					buffer.Complete();
-					buffer.LinkTo(DataflowBlock.NullTarget<byte[]>()); // Empty the buffer and allow the buffer to complete.
-				});
-
+				int count = 0;
 				void write(int i)
 				{
-					var message = $"{i}) {DateTime.Now}";
-					if(!buffer.Post(message) && !buffer.Completion.IsCompleted)
-						buffer.SendAsync(message).Wait();
+					var message = $"{i}) {DateTime.Now}\n";
+
+					while (!writer.Post(message)
+						&& !writer.Completion.IsCompleted
+						&& !writer.SendAsync(message).Result
+						&& !writer.Completion.IsCompleted)
+					{
+						Task.Delay(1); // Wait to retry...
+					}
+
+					Interlocked.Increment(ref count);
 				}
 
 				Parallel.For(0, 10000, write);
 				Parallel.For(10000, 20000, write);
-		
+
 				//writer.Fault(new Exception("Stop!"));
 
 				Task.Delay(1).Wait();
@@ -53,9 +49,7 @@ namespace AsyncFileWriterTester
 				Task.Delay(1000).Wait(); // Demonstrate that when nothing buffered the active stream closes.
 				Parallel.For(100000, 1000000, write);
 
-				buffer.Complete();
-				buffer.Completion.Wait();
-
+				Debug.WriteLine($"Total Posted: {count}");
 				if (writer.Completion.IsFaulted)
 					throw writer.Completion.Exception;
 			}
