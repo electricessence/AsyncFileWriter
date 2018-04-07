@@ -15,7 +15,7 @@ namespace Open
 		public readonly int BoundedCapacity;
 		readonly ActionBlock<byte[]> _writer;
 		Lazy<FileStream> _fileStream;
-		bool _completeCalled; // Need to allow for 
+		bool _completeCalled; // Need to allow for postponed messages to be processed.
 
 		public AsyncFileWriter(string filePath, int boundedCapacity = -1, Encoding encoding = null)
 		{
