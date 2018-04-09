@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -84,6 +83,7 @@ namespace Open
         /// </summary>
         public void Add(byte[] bytes)
         {
+            if (bytes == null) throw new ArgumentNullException(nameof(bytes));
             while (!_channel.Writer.TryWrite(bytes))
                 AssertWritable(_channel.Writer.WaitToWriteAsync().Result);
         }
@@ -93,14 +93,20 @@ namespace Open
         /// If the .Complete() method was called, this will throw an InvalidOperationException.
         /// </summary>
         public void Add(char[] characters)
-            => Add(Encoding.GetBytes(characters));
+        {
+            if (characters == null) throw new ArgumentNullException(nameof(characters));
+            Add(Encoding.GetBytes(characters));
+        }
 
         /// <summary>
         /// Queues a string for writing to the file.
         /// If the .Complete() method was called, this will throw an InvalidOperationException.
         /// </summary>
         public void Add(string value)
-            => Add(Encoding.GetBytes(value));
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            Add(Encoding.GetBytes(value));
+        }
 
         /// <summary>
         /// Queues a string for writing to the file suffixed with a newline character.
