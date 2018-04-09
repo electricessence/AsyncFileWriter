@@ -3,27 +3,30 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter
-		: ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>, IDisposable
+	public class AsyncFileWriter : IDisposable
 	{
 		public readonly string FilePath;
 		public readonly Encoding Encoding;
-		readonly ActionBlock<byte[]> _writer;
+		readonly Channel<byte[]> _channel;
 		Lazy<FileStream> _fileStream;
 		bool _completeCalled; // Need to allow for postponed messages to be processed.
 
 		#region Constructors
-		AsyncFileWriter(string filePath,
-			Encoding encoding,
-			ExecutionDataflowBlockOptions options = null)
+		public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
 			Encoding = encoding ?? Encoding.UTF8;
+
+			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
+			var completion = _channel.Reader.Completion;
+			completion.ContinueWith(OnCompletion);
+			Completion = completion;
 
 			_writer = new ActionBlock<byte[]>(async bytes =>
 			{
@@ -36,49 +39,18 @@ namespace Open
 				.ContinueWith(OnWriterEmpty);
 		}
 
-		public AsyncFileWriter(string filePath, Encoding encoding = null, TaskScheduler taskScheduler = null, int boundedCapacity = DataflowBlockOptions.Unbounded)
-		: this(filePath, encoding, new ExecutionDataflowBlockOptions
-		{
-			TaskScheduler = taskScheduler,
-			BoundedCapacity = boundedCapacity
-		})
-		{ }
-
-		public AsyncFileWriter(string filePath, TaskScheduler taskScheduler, int boundedCapacity = DataflowBlockOptions.Unbounded)
-		: this(filePath, null, taskScheduler, boundedCapacity) { }
-
-		public AsyncFileWriter(string filePath, Encoding encoding, int boundedCapacity)
-		: this(filePath, encoding, null, boundedCapacity) { }
-
-		public AsyncFileWriter(string filePath, int boundedCapacity)
-		: this(filePath, null, null, boundedCapacity) { }
 		#endregion
 
 		#region Completion
 		/// <summary>
 		/// The task that indicates completion.
 		/// </summary>
-		public Task Completion => _writer.Completion;
+		public Task Completion { get; private set; }
 
 		/// <summary>
 		/// Signals that no more bytes should be accepted and signal completion once all the bytes have been written.
 		/// </summary>
-		public void Complete()
-		{
-			_completeCalled = true;
-			// Avoid tossing out postponed...
-			if (_writer.InputCount == 0)
-				_writer.Complete();
-		}
-
-		/// <summary>
-		/// Stops all processing of bytes and signals completion.
-		/// </summary>
-		public void CompleteImmediate()
-		{
-			Complete();
-			_writer.Complete();
-		}
+		public void Complete() => _channel.Writer.TryComplete();
 		#endregion
 
 		Lazy<FileStream> GetFileStream()
@@ -90,11 +62,8 @@ namespace Open
 			}));
 		}
 
-		void OnWriterEmpty(Task task = null)
+		void OnCompletion(Task task = null)
 		{
-			if (_completeCalled)
-				_writer.Complete();
-
 			var fs = Interlocked.Exchange(ref _fileStream, null);
 			if (fs?.IsValueCreated ?? false)
 			{
@@ -103,43 +72,44 @@ namespace Open
 			}
 		}
 
-		#region OfferMessage
-		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, byte[] messageValue, ISourceBlock<byte[]> source, bool consumeToAccept)
-			=> _completeCalled
-			? DataflowMessageStatus.DecliningPermanently
-			: ((ITargetBlock<byte[]>)_writer).OfferMessage(messageHeader, messageValue, source, consumeToAccept);
-
-		// Might be able to build a proxy to translate the source block to the proper values and allow consumption.
-		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
-			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
-
-		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, string messageValue, ISourceBlock<string> source, bool consumeToAccept)
-			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
-
-		#endregion
-
-		public void Fault(Exception exception)
+		public async ValueTask<bool> WriteAsync(byte[] bytes)
 		{
-			((ITargetBlock<byte[]>)_writer).Fault(exception);
+			while (!_channel.Writer.TryWrite(bytes))
+			{
+				if (!await _channel.Writer.WaitToWriteAsync())
+					return false;
+			}
+			return true;
 		}
 
-		public bool PostLine(string line = null)
-			=> this.Post((line ?? string.Empty) + '\n');
+		public bool Write(byte[] bytes)
+		{
+			while(!_channel.Writer.TryWrite(bytes))
+			{
+				if (!_channel.Writer.WaitToWriteAsync().Result)
+					return false;
+			}
+			return true;
+		}
+
+		public bool Write(char[] characters)
+			=> _channel.Writer.TryWrite(Encoding.GetBytes(characters));
+
+		public bool Write(string value)
+			=> _channel.Writer.TryWrite(Encoding.GetBytes(value));
+
+		public bool WriteLine(string line = null)
+			=> Write((line ?? string.Empty) + '\n');
 
 		#region IDisposable Support
 		private bool disposedValue = false; // To detect redundant calls
 
 		protected virtual void Dispose(bool disposing)
 		{
-			Complete();
 			if (!disposedValue)
 			{
-				if (!disposing) // Garbage collecting?
-				{
-					_writer.Complete();
-				}
-
-				_writer.Completion
+				Complete();
+				Completion
 					.ContinueWith(t => { /* Ignore fault */ })
 					.Wait();
 
