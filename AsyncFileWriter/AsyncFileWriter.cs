@@ -39,7 +39,7 @@ namespace Open
         public Task Completion { get; private set; }
 
         /// <summary>
-        /// Signals that no more bytes should be accepted and signal completion once all the bytes have been written.
+        /// Signals that no more bytes should be accepted and signal completion once all the bytes have been processed to the destination file.
         /// </summary>
         public Task Complete()
         {
@@ -53,7 +53,7 @@ namespace Open
             var token = _canceller.Token;
             while (await _channel.Reader.WaitToReadAsync(token))
             {
-                Debug.WriteLine($"Initializing FileStream: {FilePath}");
+                //Debug.WriteLine($"Initializing FileStream: {FilePath}");
                 using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
                 {
                     while (_channel.Reader.TryRead(out byte[] bytes))
@@ -62,7 +62,7 @@ namespace Open
                         fs.Write(bytes, 0, bytes.Length);
                     }
 
-                    Debug.WriteLine($"Disposing FileStream: {FilePath}");
+                    //Debug.WriteLine($"Disposing FileStream: {FilePath}");
                 }
             }
         }
@@ -78,18 +78,34 @@ namespace Open
             }
         }
 
+        /// <summary>
+        /// Queues bytes for writing to the file.
+        /// If the .Complete() method was called, this will throw an InvalidOperationException.
+        /// </summary>
         public void Add(byte[] bytes)
         {
             while (!_channel.Writer.TryWrite(bytes))
                 AssertWritable(_channel.Writer.WaitToWriteAsync().Result);
         }
 
+        /// <summary>
+        /// Queues characters for writing to the file.
+        /// If the .Complete() method was called, this will throw an InvalidOperationException.
+        /// </summary>
         public void Add(char[] characters)
             => Add(Encoding.GetBytes(characters));
 
+        /// <summary>
+        /// Queues a string for writing to the file.
+        /// If the .Complete() method was called, this will throw an InvalidOperationException.
+        /// </summary>
         public void Add(string value)
             => Add(Encoding.GetBytes(value));
 
+        /// <summary>
+        /// Queues a string for writing to the file suffixed with a newline character.
+        /// If the .Complete() method was called, this will throw an InvalidOperationException.
+        /// </summary>
         public void AddLine(string line = null)
             => Add((line ?? string.Empty) + '\n');
 
