@@ -5,135 +5,133 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable
-	{
-		public readonly string FilePath;
-		public readonly Encoding Encoding;
-		readonly Channel<byte[]> _channel;
-		Lazy<FileStream> _fileStream;
-		bool _completeCalled; // Need to allow for postponed messages to be processed.
+    public class AsyncFileWriter : IDisposable
+    {
+        public readonly string FilePath;
+        public readonly Encoding Encoding;
+        public readonly int BoundedCapacity;
 
-		#region Constructors
-		public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null)
-		{
-			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
-			Encoding = encoding ?? Encoding.UTF8;
+        readonly Channel<byte[]> _channel;
+        readonly CancellationTokenSource _canceller;
 
-			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
-			var completion = _channel.Reader.Completion;
-			completion.ContinueWith(OnCompletion);
-			Completion = completion;
 
-			_writer = new ActionBlock<byte[]>(async bytes =>
-			{
-				await GetFileStream().Value.WriteAsync(bytes, 0, bytes.Length);
-				if (_writer.InputCount == 0) OnWriterEmpty();
-			},
-			options);
+        #region Constructors
+        public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null)
+        {
+            FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
+            Encoding = encoding ?? Encoding.UTF8;
+            BoundedCapacity = boundedCapacity;
 
-			_writer.Completion
-				.ContinueWith(OnWriterEmpty);
-		}
+            _canceller = new CancellationTokenSource();
+            _channel = Channel.CreateBounded<byte[]>(boundedCapacity);
+            Completion = ProcessBytes();
+        }
 
-		#endregion
+        #endregion
 
-		#region Completion
-		/// <summary>
-		/// The task that indicates completion.
-		/// </summary>
-		public Task Completion { get; private set; }
+        #region Completion
+        /// <summary>
+        /// The task that indicates completion.
+        /// </summary>
+        public Task Completion { get; private set; }
 
-		/// <summary>
-		/// Signals that no more bytes should be accepted and signal completion once all the bytes have been written.
-		/// </summary>
-		public void Complete() => _channel.Writer.TryComplete();
-		#endregion
+        /// <summary>
+        /// Signals that no more bytes should be accepted and signal completion once all the bytes have been written.
+        /// </summary>
+        public Task Complete()
+        {
+            _channel.Writer.TryComplete();
+            return Completion;
+        }
+        #endregion
 
-		Lazy<FileStream> GetFileStream()
-		{
-			return LazyInitializer.EnsureInitialized(ref _fileStream, () => new Lazy<FileStream>(() =>
-			{
-				Debug.WriteLine($"Initializing FileStream: {FilePath}");
-				return new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true);
-			}));
-		}
+        async Task ProcessBytes()
+        {
+            var token = _canceller.Token;
+            while (await _channel.Reader.WaitToReadAsync(token))
+            {
+                Debug.WriteLine($"Initializing FileStream: {FilePath}");
+                using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
+                {
+                    while (_channel.Reader.TryRead(out byte[] bytes))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        fs.Write(bytes, 0, bytes.Length);
+                    }
 
-		void OnCompletion(Task task = null)
-		{
-			var fs = Interlocked.Exchange(ref _fileStream, null);
-			if (fs?.IsValueCreated ?? false)
-			{
-				Debug.WriteLine($"Disposing FileStream: {FilePath}");
-				fs.Value.Dispose(); // Just in case...
-			}
-		}
+                    Debug.WriteLine($"Disposing FileStream: {FilePath}");
+                }
+            }
+        }
 
-		public async ValueTask<bool> WriteAsync(byte[] bytes)
-		{
-			while (!_channel.Writer.TryWrite(bytes))
-			{
-				if (!await _channel.Writer.WaitToWriteAsync())
-					return false;
-			}
-			return true;
-		}
+        void AssertWritable(bool writing)
+        {
+            if (!writing)
+            {
+                if (Completion.IsFaulted)
+                    throw new InvalidOperationException("Attempting to write to a faulted writer.");
+                else
+                    throw new InvalidOperationException("Attempting to write to a completed writer.");
+            }
+        }
 
-		public bool Write(byte[] bytes)
-		{
-			while(!_channel.Writer.TryWrite(bytes))
-			{
-				if (!_channel.Writer.WaitToWriteAsync().Result)
-					return false;
-			}
-			return true;
-		}
+        public void Add(byte[] bytes)
+        {
+            while (!_channel.Writer.TryWrite(bytes))
+                AssertWritable(_channel.Writer.WaitToWriteAsync().Result);
+        }
 
-		public bool Write(char[] characters)
-			=> _channel.Writer.TryWrite(Encoding.GetBytes(characters));
+        public void Add(char[] characters)
+            => Add(Encoding.GetBytes(characters));
 
-		public bool Write(string value)
-			=> _channel.Writer.TryWrite(Encoding.GetBytes(value));
+        public void Add(string value)
+            => Add(Encoding.GetBytes(value));
 
-		public bool WriteLine(string line = null)
-			=> Write((line ?? string.Empty) + '\n');
+        public void AddLine(string line = null)
+            => Add((line ?? string.Empty) + '\n');
 
-		#region IDisposable Support
-		private bool disposedValue = false; // To detect redundant calls
+        #region IDisposable Support
+        private bool disposedValue = false; // To detect redundant calls
 
-		protected virtual void Dispose(bool disposing)
-		{
-			if (!disposedValue)
-			{
-				Complete();
-				Completion
-					.ContinueWith(t => { /* Ignore fault */ })
-					.Wait();
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
+                    Complete().Wait();
+                }
+                else
+                {
+                    _channel.Writer.TryComplete();
+                    _canceller.Cancel();
+                }
 
-				disposedValue = true;
-			}
-		}
+                disposedValue = true;
+            }
+        }
 
-		~AsyncFileWriter()
-		{
-			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(false);
-		}
+        ~AsyncFileWriter()
+        {
+            // Do not change this code. Put cleanup code in Dispose(bool disposing) above.
+            Dispose(false);
+        }
 
-		/// <summary>
-		/// Signals completion and waits for all bytes to be written to the destination.
-		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
-		/// </summary>
-		public void Dispose()
-		{
-			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
-			// TODO: uncomment the following line if the finalizer is overridden above.
-			GC.SuppressFinalize(this);
-		}
-		#endregion
-	}
+        /// <summary>
+        /// Signals completion and waits for all bytes to be written to the destination.
+        /// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
+        /// </summary>
+        public void Dispose()
+        {
+            // Do not change this code. Put cleanup code in Dispose(bool disposing) above.
+            Dispose(true);
+            // TODO: uncomment the following line if the finalizer is overridden above.
+            GC.SuppressFinalize(this);
+        }
+        #endregion
+
+    }
 }
