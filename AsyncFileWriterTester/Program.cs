@@ -29,7 +29,7 @@ namespace AsyncFileWriterTester
 			Console.WriteLine($"Starting synchronized file stream benchmark.");
 			Test((filePath, handler) =>
 			{
-				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
+				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
 				using (var sw = new StreamWriter(fs))
 				{
 					handler(s =>
@@ -47,7 +47,7 @@ namespace AsyncFileWriterTester
 			{
 				handler(s =>
 				{
-					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write, 4096, true))
+					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write))
 					using (var sw = new StreamWriter(fs))
 						sw.Write(s);
 				});
