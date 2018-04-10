@@ -10,75 +10,115 @@ using System.Threading.Tasks.Dataflow;
 
 namespace AsyncFileWriterTester
 {
-    class Program
-    {
-        static void Main(string[] args)
-        {
-            Test(1000000);
-            Test(100000);
-            Test(10000);
-            Test(1000);
+	class Program
+	{
+		static void Main(string[] args)
+		{
+			TestSynchronizedFileStream();
+			TestAsyncFileWriter(100000);
+			TestAsyncFileWriter(10000);
+			TestAsyncFileWriter(1000);
+			TestMultipleFileStreams();
 
-            Console.WriteLine("Press ENTER to continue.");
-            Console.ReadLine();
-        }
+			Console.WriteLine("Press ENTER to continue.");
+			Console.ReadLine();
+		}
 
-        static void Test(int boundedCapacity = -1)
-        {
-            Console.WriteLine(boundedCapacity < 0 ? "Starting unbounded test" : $"Starting max {boundedCapacity}");
-            var dir = Environment.CurrentDirectory;
-            var filePath = Path.Combine(dir, "AsyncFileWriterTest.txt");
-            File.Delete(filePath); // Start from scratch. (comment out for further appends.)
+		static void TestSynchronizedFileStream()
+		{
+			Console.WriteLine($"Starting synchronized file stream benchmark.");
+			Test((filePath, handler) =>
+			{
+				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
+				using (var sw = new StreamWriter(fs))
+				{
+					handler(s =>
+					{
+						lock (sw) sw.Write(s);
+					});
+				}
+			});
+		}
 
-            var byteCounter = new ConcurrentBag<int>();
-            var timeCounter = new ConcurrentBag<TimeSpan>();
+		static void TestMultipleFileStreams()
+		{
+			Console.WriteLine($"Starting multiple file stream benchmark.");
+			Test((filePath, handler) =>
+			{
+				handler(s =>
+				{
+					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write, 4096, true))
+					using (var sw = new StreamWriter(fs))
+						sw.Write(s);
+				});
+			});
+		}
 
-            var sw = Stopwatch.StartNew();
-            Console.WriteLine($"Writing to file: {filePath}");
-            using (var writer = new AsyncFileWriter(filePath, boundedCapacity))
-            {
-                int count = 0;
-                void write(int i)
-                {
-                    var message = $"{i}) {DateTime.Now}\n";
-                    var t = Stopwatch.StartNew();
-                    writer.Add(message);
-                    timeCounter.Add(t.Elapsed);
+		static void TestAsyncFileWriter(int boundedCapacity = -1)
+		{
+			Console.WriteLine($"Starting max {boundedCapacity}");
+			Test((filePath, handler) =>
+			{
+				using (var writer = new AsyncFileWriter(filePath, boundedCapacity))
+					handler(s => writer.Add(s));
+			});
+		}
 
-                    byteCounter.Add(message.Length);
-                    Interlocked.Increment(ref count);
-                }
+		static void Test(Action<string, Action<Action<string>>> context)
+		{
+			var dir = Environment.CurrentDirectory;
+			var filePath = Path.Combine(dir, "AsyncFileWriterTest.txt");
+			File.Delete(filePath); // Start from scratch. (comment out for further appends.)
 
-                Parallel.For(0, 10000, write);
-                Parallel.For(10000, 20000, write);
+			var byteCounter = new ConcurrentBag<int>();
+			var timeCounter = new ConcurrentBag<TimeSpan>();
 
-                //writer.Fault(new Exception("Stop!"));
+			Console.WriteLine($"Writing to file: AsyncFileWriterTest.txt");
 
-                Task.Delay(1).Wait();
-                Parallel.For(20000, 100000, write);
+			var sw = Stopwatch.StartNew();
+			context(filePath, writeHandler =>
+			{
+				int count = 0;
+				void write(int i)
+				{
+					var message = $"{i}) {DateTime.Now}\n";
+					var t = Stopwatch.StartNew();
+					writeHandler(message);
+					timeCounter.Add(t.Elapsed);
+					byteCounter.Add(message.Length);
+					Interlocked.Increment(ref count);
+				}
 
-                Task.Delay(1000).Wait(); // Demonstrate that when nothing buffered the active stream closes.
-                Parallel.For(100000, 1000000, write);
+				Parallel.For(0, 10000, write);
+				Parallel.For(10000, 20000, write);
 
-                Console.WriteLine($"Total Posted: {count}");
-            }
+				//writer.Fault(new Exception("Stop!"));
 
-            Console.WriteLine($"Total Time: {sw.Elapsed.TotalSeconds} seconds");
-            Console.WriteLine($"Total Bytes: {byteCounter.Sum()}");
-            Console.WriteLine($"Total Blocking Time: {timeCounter.Aggregate((b, c) => b + c)}");
-            Console.WriteLine("------------------------");
-            Console.WriteLine();
+				Task.Delay(1).Wait();
+				Parallel.For(20000, 100000, write);
 
-        }
+				Task.Delay(1000).Wait(); // Demonstrate that when nothing buffered the active stream closes.
+				Parallel.For(100000, 1000000, write);
 
-        static void Dump<T>(ISourceBlock<T> source, ITargetBlock<T> target)
-        {
-            using (source.LinkTo(target, new DataflowLinkOptions { PropagateCompletion = true }))
-            {
-                source.Complete();
-                source.Completion.Wait();
-            }
-            target.Completion.Wait();
-        }
-    }
+				Console.WriteLine($"Total Posted: {count}");
+			});
+
+			Console.WriteLine($"Total Time: {sw.Elapsed.TotalSeconds} seconds");
+			Console.WriteLine($"Total Bytes: {byteCounter.Sum()}");
+			Console.WriteLine($"Total Blocking Time: {timeCounter.Aggregate((b, c) => b + c)}");
+			Console.WriteLine("------------------------");
+			Console.WriteLine();
+
+		}
+
+		static void Dump<T>(ISourceBlock<T> source, ITargetBlock<T> target)
+		{
+			using (source.LinkTo(target, new DataflowLinkOptions { PropagateCompletion = true }))
+			{
+				source.Complete();
+				source.Completion.Wait();
+			}
+			target.Completion.Wait();
+		}
+	}
 }
