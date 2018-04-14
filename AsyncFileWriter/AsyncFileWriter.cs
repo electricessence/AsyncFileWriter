@@ -87,40 +87,43 @@ namespace Open
 		/// Queues bytes for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public void Add(byte[] bytes, params byte[][] more)
+		public async Task AddAsync(byte[] bytes, params byte[][] more)
 		{
 			if (_disposeCalled) throw new ObjectDisposedException(GetType().ToString());
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 			while (!_channel.Writer.TryWrite(bytes))
-				AssertWritable(_channel.Writer.WaitToWriteAsync().Result);
+			{
+				var written = await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false);
+				AssertWritable(written);
+			}
 
-			if (more.Length != 0) foreach (var v in more) Add(v);
+			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
 		}
 
 		/// <summary>
 		/// Queues characters for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public void Add(char[] characters, params char[][] more)
+		public async Task AddAsync(char[] characters, params char[][] more)
 		{
 			if (characters == null) throw new ArgumentNullException(nameof(characters));
-			Add(Encoding.GetBytes(characters));
+			await AddAsync(Encoding.GetBytes(characters));
 
-			if (more.Length != 0) foreach (var v in more) Add(v);
+			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
 		}
 
 		/// <summary>
 		/// Queues a string for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public void Add(params string[] values)
+		public async Task AddAsync(params string[] values)
 		{
 			if (values == null) throw new ArgumentNullException(nameof(values));
 
 			foreach (var value in values)
 			{
 				if (value == null) throw new ArgumentNullException(nameof(value));
-				Add(Encoding.GetBytes(value));
+				await AddAsync(Encoding.GetBytes(value));
 			}
 		}
 
@@ -128,11 +131,11 @@ namespace Open
 		/// Queues a string for writing to the file suffixed with a newline character.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public void AddLine(string line = null, params string[] more)
+		public async Task AddLineAsync(string line = null, params string[] more)
 		{
-			Add((line ?? string.Empty) + '\n');
+			await AddAsync((line ?? string.Empty) + '\n');
 
-			if (more.Length != 0) foreach (var v in more) AddLine(v);
+			if (more.Length != 0) foreach (var v in more) await AddLineAsync(v);
 		}
 
 		#region IDisposable Support
