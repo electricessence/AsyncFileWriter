@@ -58,7 +58,7 @@ namespace Open
 
 		async Task ProcessBytes(CancellationToken token)
 		{
-			while (await _channel.Reader.WaitToReadAsync(token))
+			while (await _channel.Reader.WaitToReadAsync(token).ConfigureAwait(false))
 			{
 				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode))
 				{

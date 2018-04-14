@@ -14,12 +14,12 @@ namespace AsyncFileWriterTester
 	{
 		static void Main(string[] args)
 		{
-			TestSynchronizedFileStream();
+			//TestSynchronizedFileStream();
 			TestAsyncFileWriter(100000);
 			TestAsyncFileWriter(10000);
 			TestAsyncFileWriter(1000);
 			TestAsyncFileWriter(100);
-			TestMultipleFileStreams();
+			//TestMultipleFileStreams();
 
 			Console.WriteLine("Press ENTER to continue.");
 			Console.ReadLine();
