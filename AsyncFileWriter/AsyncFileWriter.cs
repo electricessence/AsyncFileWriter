@@ -89,6 +89,7 @@ namespace Open
 		/// </summary>
 		public void Add(byte[] bytes, params byte[][] more)
 		{
+			if (_disposeCalled) throw new ObjectDisposedException(GetType().ToString());
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 			while (!_channel.Writer.TryWrite(bytes))
 				AssertWritable(_channel.Writer.WaitToWriteAsync().Result);
@@ -135,12 +136,15 @@ namespace Open
 		}
 
 		#region IDisposable Support
-		private bool disposedValue = false; // To detect redundant calls
+		private bool _disposeCalled = false;
+		private bool _disposed = false; // To detect redundant calls
 
 		protected virtual void Dispose(bool disposing)
 		{
-			if (!disposedValue)
+			if (!_disposed)
 			{
+				_disposeCalled = true;
+
 				if (disposing)
 				{
 					Complete().Wait();
@@ -151,7 +155,7 @@ namespace Open
 					_canceller.Cancel();
 				}
 
-				disposedValue = true;
+				_disposed = true;
 			}
 		}
 
