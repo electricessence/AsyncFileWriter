@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics.Contracts;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -15,9 +16,8 @@ namespace Open
 		public readonly Encoding Encoding;
 		public readonly FileShare FileShareMode;
 
+		bool _declinePermanently;
 		readonly Channel<byte[]> _channel;
-		readonly CancellationTokenSource _canceller;
-
 
 		#region Constructors
 		/// <summary>
@@ -35,8 +35,12 @@ namespace Open
 			FileShareMode = fileSharingMode;
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
-			_canceller = new CancellationTokenSource();
-			Completion = ProcessBytes(_canceller.Token);
+			Completion = ProcessBytes()
+				.ContinueWith(
+					t => t.IsCompleted
+						? _channel.Reader.Completion
+						: t)
+				.Unwrap(); // Propagate the task state...
 		}
 
 		#endregion
@@ -52,23 +56,21 @@ namespace Open
 		/// </summary>
 		public Task Complete()
 		{
+			_declinePermanently = true;
 			_channel.Writer.TryComplete();
 			return Completion;
 		}
 		#endregion
 
-		async Task ProcessBytes(CancellationToken token)
+		async Task ProcessBytes()
 		{
 			var reader = _channel.Reader;
-			while (await reader.WaitToReadAsync(token).ConfigureAwait(false))
+			while (await reader.WaitToReadAsync().ConfigureAwait(false))
 			{
 				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode))
 				{
 					while (reader.TryRead(out byte[] bytes))
-					{
-						token.ThrowIfCancellationRequested();
 						fs.Write(bytes, 0, bytes.Length);
-					}
 				}
 			}
 		}
@@ -90,8 +92,11 @@ namespace Open
 		/// </summary>
 		public async Task AddAsync(byte[] bytes, params byte[][] more)
 		{
-			if (_disposeCalled) throw new ObjectDisposedException(GetType().ToString());
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+			Contract.EndContractBlock();
+
+			if (_disposeState != 0) throw new ObjectDisposedException(GetType().ToString());
+
 			while (!_channel.Writer.TryWrite(bytes))
 			{
 				var written = await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false);
@@ -108,6 +113,8 @@ namespace Open
 		public async Task AddAsync(char[] characters, params char[][] more)
 		{
 			if (characters == null) throw new ArgumentNullException(nameof(characters));
+			Contract.EndContractBlock();
+
 			await AddAsync(Encoding.GetBytes(characters));
 
 			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
@@ -120,6 +127,7 @@ namespace Open
 		public async Task AddAsync(params string[] values)
 		{
 			if (values == null) throw new ArgumentNullException(nameof(values));
+			Contract.EndContractBlock();
 
 			foreach (var value in values)
 			{
@@ -140,26 +148,24 @@ namespace Open
 		}
 
 		#region IDisposable Support
-		private bool _disposeCalled = false;
-		private bool _disposed = false; // To detect redundant calls
+		int _disposeState = 0;
 
-		protected virtual void Dispose(bool disposing)
+		protected virtual void Dispose(bool calledExplicitly)
 		{
-			if (!_disposed)
+			if (0 == Interlocked.CompareExchange(ref _disposeState, 1, 0))
 			{
-				_disposeCalled = true;
-
-				if (disposing)
+				if (calledExplicitly)
 				{
 					Complete().Wait();
 				}
 				else
 				{
-					_channel.Writer.TryComplete();
-					_canceller.Cancel();
+					// Left for the GC? :(
+					_channel.Writer.TryComplete(); // First try and mark as complete as if normal.
+					_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
 				}
 
-				_disposed = true;
+				Interlocked.CompareExchange(ref _disposeState, 2, 1);
 			}
 		}
 
@@ -187,13 +193,18 @@ namespace Open
 
 		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, byte[] bytes, ISourceBlock<byte[]> source, bool consumeToAccept)
 		{
+			if (_declinePermanently || _channel.Reader.Completion.IsCompleted)
+				return DataflowMessageStatus.DecliningPermanently;
+
 			if (_channel.Writer.TryWrite(bytes))
-			{
 				return DataflowMessageStatus.Accepted;
-			} else
+
+			if (consumeToAccept)
 			{
-				return DataflowMessageStatus.Declined;
+				// How to properly implement this to allow .SendAsync(bytes) to work?
 			}
+
+			return DataflowMessageStatus.Declined;
 		}
 
 		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
@@ -209,9 +220,11 @@ namespace Open
 
 		public void Fault(Exception exception)
 		{
-			throw new NotImplementedException();
+			if (exception == null) throw new ArgumentNullException(nameof(exception));
+			Contract.EndContractBlock();
+			_declinePermanently = true;
+			_channel.Writer.TryComplete(exception);
 		}
-
 
 		#endregion
 	}

@@ -61,7 +61,7 @@ namespace AsyncFileWriterTester
 			Test((filePath, handler) =>
 			{
 				using (var writer = new AsyncFileWriter(filePath, boundedCapacity))
-					handler(s => writer.SendAsync(s).Wait());
+					handler(s => writer.AddAsync(s).Wait());
 			});
 		}
 
@@ -80,7 +80,7 @@ namespace AsyncFileWriterTester
 				int count = 0;
 				void write(int i)
 				{
-					var message = $"{i}) {DateTime.Now}\n 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222";
+					var message = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
 					var t = Stopwatch.StartNew();
 					writeHandler(message);
 					timeCounter.Add(t.Elapsed);
