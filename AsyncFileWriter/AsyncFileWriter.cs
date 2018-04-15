@@ -9,7 +9,7 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+	public class AsyncFileWriter : IDisposableAsync, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
@@ -35,12 +35,7 @@ namespace Open
 			FileShareMode = fileSharingMode;
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
-			Completion = ProcessBytes()
-				.ContinueWith(
-					t => t.IsCompleted
-						? _channel.Reader.Completion
-						: t)
-				.Unwrap(); // Propagate the task state...
+			Completion = ProcessBytes();
 		}
 
 		#endregion
@@ -65,14 +60,24 @@ namespace Open
 		async Task ProcessBytes()
 		{
 			var reader = _channel.Reader;
-			while (await reader.WaitToReadAsync().ConfigureAwait(false))
+			using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
 			{
-				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode))
+				Task writeTask = Task.CompletedTask;
+				while (await reader.WaitToReadAsync().ConfigureAwait(false))
 				{
 					while (reader.TryRead(out byte[] bytes))
-						fs.Write(bytes, 0, bytes.Length);
+					{
+						await writeTask.ConfigureAwait(false);
+						writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
+					}
 				}
+
+				await writeTask.ConfigureAwait(false);
+				// FlushAsync here rather than block in Dispose on Flush
+				await fs.FlushAsync().ConfigureAwait(false);
 			}
+
+			await _channel.Reader.Completion.ConfigureAwait(false);
 		}
 
 		void AssertWritable(bool writing)
@@ -90,7 +95,7 @@ namespace Open
 		/// Queues bytes for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddAsync(byte[] bytes, params byte[][] more)
+		public async Task AddAsync(byte[] bytes)
 		{
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 			Contract.EndContractBlock();
@@ -102,6 +107,20 @@ namespace Open
 				var written = await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false);
 				AssertWritable(written);
 			}
+		}
+
+		/// <summary>
+		/// Queues bytes for writing to the file.
+		/// If the .Complete() method was called, this will throw an InvalidOperationException.
+		/// </summary>
+		public async Task AddAsync(byte[] bytes, params byte[][] more)
+		{
+			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
+			Contract.EndContractBlock();
+
+			if (_disposeState != 0) throw new ObjectDisposedException(GetType().ToString());
+
+			await AddAsync(bytes);
 
 			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
 		}
@@ -150,13 +169,13 @@ namespace Open
 		#region IDisposable Support
 		int _disposeState = 0;
 
-		protected virtual void Dispose(bool calledExplicitly)
+		protected virtual async Task DisposeAsync(bool calledExplicitly)
 		{
-			if (0 == Interlocked.CompareExchange(ref _disposeState, 1, 0))
+			if (0 == Interlocked.CompareExchange(ref _disposeState, 0, 1))
 			{
 				if (calledExplicitly)
 				{
-					Complete().Wait();
+					await Complete().ConfigureAwait(false);
 				}
 				else
 				{
@@ -165,24 +184,24 @@ namespace Open
 					_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
 				}
 
-				Interlocked.CompareExchange(ref _disposeState, 2, 1);
+				Interlocked.Exchange(ref _disposeState, 2);
 			}
 		}
 
 		~AsyncFileWriter()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(false);
+			DisposeAsync(false).Wait();
 		}
 
 		/// <summary>
 		/// Signals completion and waits for all bytes to be written to the destination.
 		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
 		/// </summary>
-		public void Dispose()
+		public async Task DisposeAsync()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
+			await DisposeAsync(true).ConfigureAwait(false);
 			// TODO: uncomment the following line if the finalizer is overridden above.
 			GC.SuppressFinalize(this);
 		}
@@ -215,7 +234,7 @@ namespace Open
 
 		void IDataflowBlock.Complete()
 		{
-			this.Complete();
+			this.Complete().Wait();
 		}
 
 		public void Fault(Exception exception)
