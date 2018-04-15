@@ -9,7 +9,7 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+	public class AsyncFileWriter : IDisposableAsync, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
@@ -62,15 +62,24 @@ namespace Open
 		}
 		#endregion
 
-		async Task ProcessBytes()
+		async Task ProcessBytesAsync(CancellationToken token)
 		{
 			var reader = _channel.Reader;
 			while (await reader.WaitToReadAsync().ConfigureAwait(false))
 			{
-				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode))
+				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
 				{
+					Task writeTask = Task.CompletedTask;
 					while (reader.TryRead(out byte[] bytes))
-						fs.Write(bytes, 0, bytes.Length);
+					{
+						token.ThrowIfCancellationRequested();
+						await writeTask.ConfigureAwait(false);
+						writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
+					}
+
+					await writeTask.ConfigureAwait(false);
+					// FlushAsync here rather than block in Dispose on Flush
+					await fs.FlushAsync().ConfigureAwait(false);
 				}
 			}
 		}
@@ -150,13 +159,13 @@ namespace Open
 		#region IDisposable Support
 		int _disposeState = 0;
 
-		protected virtual void Dispose(bool calledExplicitly)
+		protected virtual void Dispose(bool disposing)
 		{
 			if (0 == Interlocked.CompareExchange(ref _disposeState, 1, 0))
 			{
 				if (calledExplicitly)
 				{
-					Complete().Wait();
+					await Complete().ConfigureAwait(false);
 				}
 				else
 				{
@@ -172,17 +181,17 @@ namespace Open
 		~AsyncFileWriter()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(false);
+			DisposeAsync(false).Wait();
 		}
 
 		/// <summary>
 		/// Signals completion and waits for all bytes to be written to the destination.
 		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
 		/// </summary>
-		public void Dispose()
+		public async Task DisposeAsync()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
+			await DisposeAsync(true).ConfigureAwait(false);
 			// TODO: uncomment the following line if the finalizer is overridden above.
 			GC.SuppressFinalize(this);
 		}
