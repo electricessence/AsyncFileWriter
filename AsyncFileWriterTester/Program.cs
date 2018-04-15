@@ -15,13 +15,65 @@ namespace AsyncFileWriterTester
 	{
 		static async Task Main(string[] args)
 		{
+			//await TestSynchronizedFileStream();
 			await TestAsyncFileWriter(100000);
 			await TestAsyncFileWriter(10000);
 			await TestAsyncFileWriter(1000);
 			await TestAsyncFileWriter(100);
+			//await TestMultipleFileStreams();
 
 			Console.WriteLine("Press ENTER to continue.");
 			Console.ReadLine();
+		}
+
+		static SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1);
+
+		static Task TestSynchronizedFileStream()
+		{
+			Console.WriteLine($"Synchronized file stream benchmark.");
+			return TestAsync(async (filePath, handler) =>
+			{
+				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, bufferSize: 4096 * 4, useAsync: true))
+				using (var sw = new StreamWriter(fs))
+				{
+					await handler(async s =>
+					{
+						await semaphoreSlim.WaitAsync().ConfigureAwait(false);
+						try
+						{
+							await sw.WriteAsync(s);
+						}
+						finally
+						{
+							semaphoreSlim.Release();
+						}
+					});
+
+					// FlushAsync here rather than block in Dispose on Flush
+					await sw.FlushAsync();
+					await fs.FlushAsync();
+				}
+			});
+		}
+
+		static Task TestMultipleFileStreams()
+		{
+			Console.WriteLine($"Multiple file stream benchmark.");
+			return TestAsync(async (filePath, handler) =>
+			{
+				await handler(async s =>
+				{
+					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write, bufferSize: 4096 * 4, useAsync: true))
+					using (var sw = new StreamWriter(fs))
+					{
+						await sw.WriteAsync(s);
+
+						// FlushAsync here rather than block in Dispose on Flush
+						await sw.FlushAsync();
+						await fs.FlushAsync();
+					}
+				});
+			});
 		}
 
 		static Task TestAsyncFileWriter(int boundedCapacity = -1)

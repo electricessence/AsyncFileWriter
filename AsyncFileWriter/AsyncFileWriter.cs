@@ -60,19 +60,22 @@ namespace Open
 		async Task ProcessBytesAsync(CancellationToken token)
 		{
 			var reader = _channel.Reader;
-			using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
+			while (await reader.WaitToReadAsync(token).ConfigureAwait(false))
 			{
-				Task writeTask = Task.CompletedTask;
-				while (await reader.WaitToReadAsync(token).ConfigureAwait(false))
+				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
 				{
+					Task writeTask = Task.CompletedTask;
 					while (reader.TryRead(out byte[] bytes))
 					{
 						token.ThrowIfCancellationRequested();
 						await writeTask.ConfigureAwait(false);
 						writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
 					}
+
+					await writeTask.ConfigureAwait(false);
+					// FlushAsync here rather than block in Dispose on Flush
+					await fs.FlushAsync().ConfigureAwait(false);
 				}
-				await writeTask.ConfigureAwait(false);
 			}
 		}
 
