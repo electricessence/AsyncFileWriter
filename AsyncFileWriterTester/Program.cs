@@ -41,7 +41,7 @@ namespace AsyncFileWriterTester
 						await semaphoreSlim.WaitAsync().ConfigureAwait(false);
 						try
 						{
-							await sw.WriteAsync(s);
+							await sw.WriteAsync(s).ConfigureAwait(false);
 						}
 						finally
 						{
@@ -50,8 +50,8 @@ namespace AsyncFileWriterTester
 					});
 
 					// FlushAsync here rather than block in Dispose on Flush
-					await sw.FlushAsync();
-					await fs.FlushAsync();
+					await sw.FlushAsync().ConfigureAwait(false);
+					await fs.FlushAsync().ConfigureAwait(false);
 				}
 			});
 		}
@@ -66,11 +66,11 @@ namespace AsyncFileWriterTester
 					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write, bufferSize: 4096 * 4, useAsync: true))
 					using (var sw = new StreamWriter(fs))
 					{
-						await sw.WriteAsync(s);
+						await sw.WriteAsync(s).ConfigureAwait(false);
 
 						// FlushAsync here rather than block in Dispose on Flush
-						await sw.FlushAsync();
-						await fs.FlushAsync();
+						await sw.FlushAsync().ConfigureAwait(false);
+						await fs.FlushAsync().ConfigureAwait(false);
 					}
 				});
 			});
@@ -116,7 +116,7 @@ namespace AsyncFileWriterTester
 
 			Console.WriteLine($"Total Time: {sw.Elapsed.TotalSeconds} seconds");
 			Console.WriteLine($"Total Bytes: {Counter.Aggregate((b, c) => new Telemetry() { Bytes = b.Bytes + c.Bytes }).Bytes:#,##0}");
-			Console.WriteLine($"Total Blocking Time: {Counter.Aggregate((b, c) => new Telemetry() { Time = b.Time + c.Time }).Time}");
+			Console.WriteLine($"Total Wait Time: {Counter.Aggregate((b, c) => new Telemetry() { Time = b.Time + c.Time }).Time}");
 			Console.WriteLine("------------------------");
 			Console.WriteLine();
 		}
@@ -137,11 +137,11 @@ namespace AsyncFileWriterTester
 			//Console.WriteLine("Total Posted: {0:#,##0}", count);
 		}
 
-		static async Task WriteAsync(int i, Func<string, Task> s)
+		static async Task WriteAsync(int i, Func<string, Task> asyncHandler)
 		{
 			var message = $"{i}) {DateTime.Now}\n 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222";
 			var t = Stopwatch.StartNew();
-			await s(message).ConfigureAwait(false);
+			await asyncHandler(message).ConfigureAwait(false);
 			t.Stop();
 			Counter.Add(new Telemetry() { Time = t.Elapsed, Bytes = message.Length });
 			Interlocked.Increment(ref count);
