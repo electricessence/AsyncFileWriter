@@ -8,7 +8,7 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+	public class AsyncFileWriter : IDisposableAsync, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
@@ -36,7 +36,7 @@ namespace Open
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
 			_canceller = new CancellationTokenSource();
-			Completion = ProcessBytes(_canceller.Token);
+			Completion = ProcessBytesAsync(_canceller.Token);
 		}
 
 		#endregion
@@ -57,19 +57,22 @@ namespace Open
 		}
 		#endregion
 
-		async Task ProcessBytes(CancellationToken token)
+		async Task ProcessBytesAsync(CancellationToken token)
 		{
 			var reader = _channel.Reader;
-			while (await reader.WaitToReadAsync(token).ConfigureAwait(false))
+			using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
 			{
-				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode))
+				Task writeTask = Task.CompletedTask;
+				while (await reader.WaitToReadAsync(token).ConfigureAwait(false))
 				{
 					while (reader.TryRead(out byte[] bytes))
 					{
 						token.ThrowIfCancellationRequested();
-						fs.Write(bytes, 0, bytes.Length);
+						await writeTask.ConfigureAwait(false);
+						writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
 					}
 				}
+				await writeTask.ConfigureAwait(false);
 			}
 		}
 
@@ -143,7 +146,8 @@ namespace Open
 		private bool _disposeCalled = false;
 		private bool _disposed = false; // To detect redundant calls
 
-		protected virtual void Dispose(bool disposing)
+
+		protected virtual async Task DisposeAsync(bool disposing)
 		{
 			if (!_disposed)
 			{
@@ -151,7 +155,7 @@ namespace Open
 
 				if (disposing)
 				{
-					Complete().Wait();
+					await Complete().ConfigureAwait(false);
 				}
 				else
 				{
@@ -166,17 +170,17 @@ namespace Open
 		~AsyncFileWriter()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(false);
+			DisposeAsync(false).Wait();
 		}
 
 		/// <summary>
 		/// Signals completion and waits for all bytes to be written to the destination.
 		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
 		/// </summary>
-		public void Dispose()
+		public async Task DisposeAsync()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
+			await DisposeAsync(true).ConfigureAwait(false);
 			// TODO: uncomment the following line if the finalizer is overridden above.
 			GC.SuppressFinalize(this);
 		}
