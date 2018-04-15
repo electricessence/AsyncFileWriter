@@ -61,7 +61,7 @@ namespace AsyncFileWriterTester
 			Test((filePath, handler) =>
 			{
 				using (var writer = new AsyncFileWriter(filePath, boundedCapacity))
-					handler(s => writer.AddAsync(s).Wait());
+					handler(s => writer.SendAsync(s).Wait());
 			});
 		}
 

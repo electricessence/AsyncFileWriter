@@ -4,10 +4,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable
+	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
@@ -179,7 +180,39 @@ namespace Open
 			// TODO: uncomment the following line if the finalizer is overridden above.
 			GC.SuppressFinalize(this);
 		}
+
 		#endregion
 
+		#region ITargetBlock
+
+		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, byte[] bytes, ISourceBlock<byte[]> source, bool consumeToAccept)
+		{
+			if (_channel.Writer.TryWrite(bytes))
+			{
+				return DataflowMessageStatus.Accepted;
+			} else
+			{
+				return DataflowMessageStatus.Declined;
+			}
+		}
+
+		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
+			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
+
+		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, string messageValue, ISourceBlock<string> source, bool consumeToAccept)
+			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
+
+		void IDataflowBlock.Complete()
+		{
+			this.Complete();
+		}
+
+		public void Fault(Exception exception)
+		{
+			throw new NotImplementedException();
+		}
+
+
+		#endregion
 	}
 }
