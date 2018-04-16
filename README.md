@@ -11,6 +11,8 @@ Testing has revealed that using a standard ```fs.Write(bytes)``` on the underlyi
 ```await fs.WriteAsync(bytes)``` creates enough overhead that the overall time taken to write to the destination can be much worse.
 This may be fixed in future versions of .NET Core/Standard.
 
+---
+
 ## Current Testing Results
 Total bytes written per test: 116,888,890
 
