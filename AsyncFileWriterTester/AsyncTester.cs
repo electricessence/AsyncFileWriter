@@ -43,13 +43,13 @@ namespace AsyncFileWriterTester
 				Parallel.For(0, 10000, write);
 				Parallel.For(10000, 20000, write);
 
-					//writer.Fault(new Exception("Stop!"));
+				//writer.Fault(new Exception("Stop!"));
 
 				Task.Delay(1).Wait();
 				Parallel.For(20000, 100000, write);
 
 				Task.Delay(1000).Wait(); // Demonstrate that when nothing buffered the active stream closes.
-					Parallel.For(100000, 1000000, write);
+				Parallel.For(100000, 1000000, write);
 
 				await Task.Yield();
 			});
@@ -71,8 +71,9 @@ namespace AsyncFileWriterTester
 			Console.WriteLine("{0:#,##0} bounded capacity.", boundedCapacity);
 			return RunAndReportToConsole(async (filePath, handler) =>
 			{
-				using (var writer = new AsyncFileWriter(filePath, boundedCapacity, asyncFileStream: true))
-					await handler(s => writer.AddAsync(s));
+				var writer = new AsyncFileWriter(filePath, boundedCapacity, asyncFileStream: true);
+				await handler(s => writer.AddAsync(s));
+				await writer.DisposeAsync();
 			});
 		}
 	}
