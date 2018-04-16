@@ -8,4 +8,5 @@ Manages multi-threaded writing to a single file.
 
 Testing has revealed that using a standard ```fs.Write(bytes)``` on the underlying file stream yields optimal results.
 
-```await fs.WriteAsync(bytes)``` creates enough overhead that the overall time taken to write to the destination can be much worse.  This may be fixed in future versions of .NET Core/Standard.
+```await fs.WriteAsync(bytes)``` creates enough overhead that the overall time taken to write to the destination can be much worse.
+This may be fixed in future versions of .NET Core/Standard.
