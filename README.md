@@ -2,7 +2,7 @@
 Manages multi-threaded writing to a single file.
 
 ## Async Options
-```.AsyncFileStream``` and ```.AsyncFileWrite``` are provided for configurability but the default of ```false``` for both is recommended. (Continue reading to know why.)
+```.AsyncFileStream``` and ```.AsyncFileWrite``` are provided for configurability but the default of ```false``` for both is recommended.
 
 ## Default Behavior
 
