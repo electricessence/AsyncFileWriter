@@ -9,7 +9,7 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter
+	public sealed class AsyncFileWriter
 		: IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
@@ -188,7 +188,7 @@ namespace Open
 		#region IDisposable Support
 		Lazy<Task> _disposer;
 
-		protected Task DisposeAsync(bool calledExplicitly)
+		Task DisposeAsync(bool calledExplicitly)
 			// EnsureInitialized is optimistic.
 			=> LazyInitializer.EnsureInitialized(ref _disposer,
 				// Lazy is pessimistic.
