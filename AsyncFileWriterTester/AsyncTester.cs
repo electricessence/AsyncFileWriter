@@ -66,12 +66,12 @@ namespace AsyncFileWriterTester
 		public static async Task RunAndReportToConsole(Func<string, Func<Func<string, Task>, Task>, Task> context, string fileName = "AsyncFileWriterTest.txt")
 			=> (await new AsyncTester(fileName).Run(context)).EmitToConsole();
 
-		public static Task TestAsyncFileWriter(int boundedCapacity = -1)
+		public static Task TestAsyncFileWriter(int boundedCapacity, bool asyncFileWrite)
 		{
 			Console.WriteLine("{0:#,##0} bounded capacity.", boundedCapacity);
 			return RunAndReportToConsole(async (filePath, handler) =>
 			{
-				var writer = new AsyncFileWriter(filePath, boundedCapacity, asyncFileStream: true);
+				var writer = new AsyncFileWriter(filePath, boundedCapacity, asyncFileStream: true, asyncFileWrite: asyncFileWrite);
 				await handler(s => writer.AddAsync(s));
 				await writer.DisposeAsync();
 			});

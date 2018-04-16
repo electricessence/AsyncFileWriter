@@ -99,7 +99,7 @@ namespace AsyncFileWriterTester
 			});
 		}
 
-		public static Task TestAsyncFileWriter(int boundedCapacity = -1)
+		public static Task TestAsyncFileWriter(int boundedCapacity)
 		{
 			Console.WriteLine("{0:#,##0} bounded capacity.", boundedCapacity);
 			return RunAndReportToConsole((filePath, handler) =>

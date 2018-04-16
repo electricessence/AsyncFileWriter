@@ -19,11 +19,18 @@ namespace AsyncFileWriterTester
 
 			// await SynchronousTester.TestMultipleFileStreams(); // This simply takes way too long to even report.
 
+
+			Console.WriteLine();
+			Console.WriteLine("TESTS WITH PARTIAL BLOCKING AND ASYNC FILESTREAM:\n");
+
+			foreach (var c in capacities)
+				await AsyncTester.TestAsyncFileWriter(c, false);
+
 			Console.WriteLine();
 			Console.WriteLine("FULLY ASYNCHRONOUS:\n");
 
 			foreach (var c in capacities)
-				await AsyncTester.TestAsyncFileWriter(c);
+				await AsyncTester.TestAsyncFileWriter(c, true);
 
 
 			Console.WriteLine("Press ENTER to continue.");

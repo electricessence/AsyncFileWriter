@@ -17,6 +17,7 @@ namespace Open
 		public readonly Encoding Encoding;
 		public readonly FileShare FileShareMode;
 		public readonly bool AsyncFileStream;
+		public readonly bool AsyncFileWrite;
 		public readonly int BufferSize;
 
 		bool _declinePermanently;
@@ -38,7 +39,8 @@ namespace Open
 			Encoding encoding = null,
 			FileShare fileSharingMode = FileShare.None,
 			int bufferSize = 4096,
-			bool asyncFileStream = false)
+			bool asyncFileStream = false,
+			bool asyncFileWrite = false)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
 			BoundedCapacity = boundedCapacity;
@@ -46,6 +48,7 @@ namespace Open
 			FileShareMode = fileSharingMode;
 			BufferSize = bufferSize;
 			AsyncFileStream = asyncFileStream;
+			AsyncFileWrite = asyncFileWrite;
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
 			Completion = ProcessBytesAsync()
@@ -82,7 +85,7 @@ namespace Open
 			{
 				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: BufferSize, useAsync: AsyncFileStream))
 				{
-					if (AsyncFileStream)
+					if (AsyncFileWrite)
 					{
 						Task writeTask = Task.CompletedTask;
 						while (reader.TryRead(out byte[] bytes))
