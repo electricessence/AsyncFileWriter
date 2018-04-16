@@ -16,7 +16,7 @@ namespace AsyncFileWriterTester
 
 			foreach (var c in capacities)
 				await SynchronousTester.TestAsyncFileWriter(c);
-
+			
 			// await SynchronousTester.TestMultipleFileStreams(); // This simply takes way too long to even report.
 
 

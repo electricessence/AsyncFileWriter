@@ -32,26 +32,24 @@ namespace AsyncFileWriterTester
 			var sw = Stopwatch.StartNew();
 			await context(filePath, async writeHandler =>
 			{
-				void write(int i)
+				async Task write(int i)
 				{
 					var message = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
 					var t = Stopwatch.StartNew();
-					writeHandler(message).Wait();
+					await writeHandler(message);
 					telemetry.Add((message.Length, t.Elapsed));
 				}
 
-				Parallel.For(0, 10000, write);
-				Parallel.For(10000, 20000, write);
+				await ParallelAsync.ForAsync(0, 10000, write);
+				await ParallelAsync.ForAsync(10000, 20000, write);
 
 				//writer.Fault(new Exception("Stop!"));
 
-				Task.Delay(1).Wait();
-				Parallel.For(20000, 100000, write);
+				await Task.Delay(1);
+				await ParallelAsync.ForAsync(20000, 100000, write);
 
-				Task.Delay(1000).Wait(); // Demonstrate that when nothing buffered the active stream closes.
-				Parallel.For(100000, 1000000, write);
-
-				await Task.Yield();
+				await Task.Delay(1000); // Demonstrate that when nothing buffered the active stream closes.
+				await ParallelAsync.ForAsync(100000, 1000000, write);
 			});
 			sw.Stop();
 
