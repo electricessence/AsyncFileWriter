@@ -9,12 +9,14 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposableAsync, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
 		public readonly Encoding Encoding;
 		public readonly FileShare FileShareMode;
+		public readonly bool AsyncFileStream;
+		public readonly int BufferSize;
 
 		bool _declinePermanently;
 		readonly Channel<byte[]> _channel;
@@ -27,15 +29,17 @@ namespace Open
 		/// <param name="boundedCapacity">The maximum number of entries to allow before blocking producing threads.</param>
 		/// <param name="encoding">The encoding type to use for transforming strings and characters to bytes.  The default is UTF8.</param>
 		/// <param name="fileSharingMode">The file sharing mode to use.  The default is FileShare.None (will not allow multiple writers). </param>
-		public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null, FileShare fileSharingMode = FileShare.None)
+		public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null, FileShare fileSharingMode = FileShare.None, int bufferSize = 4096 * 4, bool asyncFileStream = false)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
 			BoundedCapacity = boundedCapacity;
 			Encoding = encoding ?? Encoding.UTF8;
 			FileShareMode = fileSharingMode;
+			BufferSize = bufferSize;
+			AsyncFileStream = asyncFileStream;
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
-			Completion = ProcessBytes()
+			Completion = ProcessBytesAsync()
 				.ContinueWith(
 					t => t.IsCompleted
 						? _channel.Reader.Completion
@@ -62,28 +66,38 @@ namespace Open
 		}
 		#endregion
 
-		async Task ProcessBytesAsync(CancellationToken token)
+		async Task ProcessBytesAsync()
 		{
 			var reader = _channel.Reader;
 			while (await reader.WaitToReadAsync().ConfigureAwait(false))
 			{
-				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: 4096 * 4, useAsync: true))
+				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: BufferSize, useAsync: AsyncFileStream))
 				{
-					Task writeTask = Task.CompletedTask;
-					while (reader.TryRead(out byte[] bytes))
+					if (AsyncFileStream)
 					{
-						token.ThrowIfCancellationRequested();
-						await writeTask.ConfigureAwait(false);
-						writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
-					}
+						Task writeTask = Task.CompletedTask;
+						while (reader.TryRead(out byte[] bytes))
+						{
+							await writeTask.ConfigureAwait(false);
+							writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
+						}
 
-					await writeTask.ConfigureAwait(false);
-					// FlushAsync here rather than block in Dispose on Flush
-					await fs.FlushAsync().ConfigureAwait(false);
+						await writeTask.ConfigureAwait(false);
+						// FlushAsync here rather than block in Dispose on Flush
+						await fs.FlushAsync().ConfigureAwait(false);
+					}
+					else
+					{
+						while (reader.TryRead(out byte[] bytes))
+						{
+							fs.Write(bytes, 0, bytes.Length);
+						}
+					}
 				}
 			}
 		}
 
+		#region Add (queue) data methods.
 		void AssertWritable(bool writing)
 		{
 			if (!writing)
@@ -104,7 +118,8 @@ namespace Open
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 			Contract.EndContractBlock();
 
-			if (_disposeState != 0) throw new ObjectDisposedException(GetType().ToString());
+			if (_disposer != null) throw new ObjectDisposedException(GetType().ToString());
+			AssertWritable(!_declinePermanently);
 
 			while (!_channel.Writer.TryWrite(bytes))
 			{
@@ -155,39 +170,29 @@ namespace Open
 
 			if (more.Length != 0) foreach (var v in more) await AddLineAsync(v);
 		}
+		#endregion
 
 		#region IDisposable Support
-		int _disposeState = 0;
+		Lazy<Task> _disposer;
 
-		protected virtual void Dispose(bool disposing)
-		{
-			if (0 == Interlocked.CompareExchange(ref _disposeState, 1, 0))
-			{
-				if (calledExplicitly)
+		protected Task DisposeAsync(bool calledExplicitly)
+			// EnsureInitialized is optimistic.
+			=> LazyInitializer.EnsureInitialized(ref _disposer,
+				// Lazy is pessimistic.
+				() => new Lazy<Task>(() => Task.Run(async () =>
 				{
-					await Complete().ConfigureAwait(false);
-				}
-				else
-				{
-					// Left for the GC? :(
-					_channel.Writer.TryComplete(); // First try and mark as complete as if normal.
-					_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
-				}
+					if (calledExplicitly)
+					{
+						await Complete().ConfigureAwait(false);
+					}
+					else
+					{
+						// Left for the GC? :(
+						_channel.Writer.TryComplete(); // First try and mark as complete as if normal.
+						_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
+					}
+				}))).Value;
 
-				Interlocked.CompareExchange(ref _disposeState, 2, 1);
-			}
-		}
-
-		~AsyncFileWriter()
-		{
-			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			DisposeAsync(false).Wait();
-		}
-
-		/// <summary>
-		/// Signals completion and waits for all bytes to be written to the destination.
-		/// If immediately cancellation of activity is required, call .CompleteImmediate() before disposing.
-		/// </summary>
 		public async Task DisposeAsync()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
@@ -196,6 +201,15 @@ namespace Open
 			GC.SuppressFinalize(this);
 		}
 
+		~AsyncFileWriter()
+		{
+			DisposeAsync(false).Wait();
+		}
+
+		public void Dispose()
+		{
+			DisposeAsync(true).Wait();
+		}
 		#endregion
 
 		#region ITargetBlock
@@ -224,7 +238,7 @@ namespace Open
 
 		void IDataflowBlock.Complete()
 		{
-			this.Complete();
+			Complete();
 		}
 
 		public void Fault(Exception exception)
