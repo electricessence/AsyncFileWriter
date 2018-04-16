@@ -9,10 +9,14 @@ namespace AsyncFileWriterTester
 		{
 			var capacities = new int[] { 100000, 10000, 1000, 500, 100 };
 
+			Console.WriteLine("STANDARD BENCHMARKS:\n");
+
+			await SynchronousTester.TestFileStreamSingleThread();
+			await SynchronousTester.TestAsyncFileStreamSingleThread();
+			await SynchronousTester.TestSynchronizedFileStream(); // The simplest benchmark using lock() and synchronous file writes.
+
 			Console.WriteLine("TESTS WITH PARTIAL BLOCKING:\n");
 
-			// The simplest benchmark using lock() and synchronous file writes.
-			await SynchronousTester.TestSynchronizedFileStream();
 
 			foreach (var c in capacities)
 				await SynchronousTester.TestAsyncFileWriter(c);

@@ -18,6 +18,14 @@ namespace AsyncFileWriterTester
 			FileName = fileName ?? throw new ArgumentNullException(nameof(fileName));
 		}
 
+		string Setup()
+		{
+			var dir = Environment.CurrentDirectory;
+			var filePath = Path.Combine(dir, FileName);
+			File.Delete(filePath); // Start from scratch. (comment out for further appends.)
+			return filePath;
+		}
+
 		public Task<(int TotalBytesQueued, TimeSpan AggregateTimeWaiting, TimeSpan Elapsed)> Run(Action<string, Action<Action<string>>> context)
 		{
 			if (context == null) throw new ArgumentNullException(nameof(context));
@@ -25,9 +33,7 @@ namespace AsyncFileWriterTester
 
 			return Task.Run(() =>
 			{
-				var dir = Environment.CurrentDirectory;
-				var filePath = Path.Combine(dir, FileName);
-				File.Delete(filePath); // Start from scratch. (comment out for further appends.)
+				var filePath = Setup();
 
 				var telemetry = new ConcurrentBag<(int bytes, TimeSpan time)>();
 
@@ -58,7 +64,7 @@ namespace AsyncFileWriterTester
 				var actualBytes = new FileInfo(filePath).Length;
 				var (bytes, time) = telemetry.Aggregate((a, b) => (a.bytes + b.bytes, a.time + b.time));
 
-				Debug.Assert(actualBytes == bytes, "Actual byte count does not match the queued bytes.");
+				Debug.Assert(actualBytes == bytes, $"Actual byte count ({actualBytes}) does not match the queued bytes ({bytes}).");
 				
 				return (bytes, time, sw.Elapsed);
 			});
@@ -67,7 +73,71 @@ namespace AsyncFileWriterTester
 		public static async Task RunAndReportToConsole(Action<string, Action<Action<string>>> context, string fileName = "AsyncFileWriterTest.txt")
 			=> (await new SynchronousTester(fileName).Run(context)).EmitToConsole();
 
+		public static Task TestFileStreamSingleThread()
+		{
+			Console.WriteLine($"File stream standard benchmark.");
+			var sw = new Stopwatch();
+			return new SynchronousTester().Run((filePath, handler) =>
+			{
+				// Reuse testing method.
+				var queue = new ConcurrentQueue<string>();
+				handler(s => queue.Enqueue(s));
+				var a = queue.ToArray();
+				var len = a.Length;
+				queue.Clear();
 
+				sw.Start();
+				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
+				using (var writer = new StreamWriter(fs))
+				{
+					for (var i = 0; i < len; i++)
+						writer.Write(a[i]);
+				}
+				sw.Stop();
+			})
+			.ContinueWith(t =>
+			{
+				Console.WriteLine("Total Elapsed Time: {0} seconds", sw.Elapsed.TotalSeconds);
+				Console.WriteLine("------------------------");
+				Console.WriteLine();
+			});
+		}
+
+		public static Task TestAsyncFileStreamSingleThread()
+		{
+			Console.WriteLine($"File stream async benchmark.");
+			var sw = new Stopwatch();
+			return new SynchronousTester().Run((filePath, handler) =>
+			{
+				// Reuse testing method.
+				var queue = new ConcurrentQueue<string>();
+				handler(s => queue.Enqueue(s));
+				var a = queue.ToArray();
+				var len = a.Length;
+				queue.Clear();
+
+				Task.Run(async () =>
+				{
+					sw.Start();
+					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
+					using (var writer = new StreamWriter(fs))
+					{
+						for (var i = 0; i < len; i++)
+							await writer.WriteAsync(a[i]).ConfigureAwait(false);
+
+						await writer.FlushAsync().ConfigureAwait(false);
+						await fs.FlushAsync().ConfigureAwait(false);
+					}
+					sw.Stop();
+				}).Wait();
+			})
+			.ContinueWith(t =>
+			{
+				Console.WriteLine("Total Elapsed Time: {0} seconds", sw.Elapsed.TotalSeconds);
+				Console.WriteLine("------------------------");
+				Console.WriteLine();
+			});
+		}
 
 		public static Task TestSynchronizedFileStream()
 		{
