@@ -9,7 +9,8 @@ using System.Threading.Tasks.Dataflow;
 
 namespace Open
 {
-	public class AsyncFileWriter : IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+	public class AsyncFileWriter
+		: IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
@@ -29,7 +30,15 @@ namespace Open
 		/// <param name="boundedCapacity">The maximum number of entries to allow before blocking producing threads.</param>
 		/// <param name="encoding">The encoding type to use for transforming strings and characters to bytes.  The default is UTF8.</param>
 		/// <param name="fileSharingMode">The file sharing mode to use.  The default is FileShare.None (will not allow multiple writers). </param>
-		public AsyncFileWriter(string filePath, int boundedCapacity, Encoding encoding = null, FileShare fileSharingMode = FileShare.None, int bufferSize = 4096 * 4, bool asyncFileStream = false)
+		/// <param name="bufferSize">The buffer size to use with the underlying FileStreams.  The default is 4KB. </param>
+		/// <param name="asyncFileStream">If true, uses a fully asynchronous file write scheme with synchronous blocking methods.</param>
+		public AsyncFileWriter(
+			string filePath,
+			int boundedCapacity,
+			Encoding encoding = null,
+			FileShare fileSharingMode = FileShare.None,
+			int bufferSize = 4096,
+			bool asyncFileStream = false)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
 			BoundedCapacity = boundedCapacity;
@@ -206,6 +215,10 @@ namespace Open
 			DisposeAsync(false).Wait();
 		}
 
+		/// <summary>
+		/// Completes the underlying queue and finishes writing out the queued bytes.
+		/// No further bytes can be added.
+		/// </summary>
 		public void Dispose()
 		{
 			DisposeAsync(true).Wait();
@@ -241,6 +254,10 @@ namespace Open
 			Complete();
 		}
 
+		/// <summary>
+		/// Attempts to complete the underlying channel with the provided exception. 
+		/// </summary>
+		/// <param name="exception">The exception to fault with.</param>
 		public void Fault(Exception exception)
 		{
 			if (exception == null) throw new ArgumentNullException(nameof(exception));
