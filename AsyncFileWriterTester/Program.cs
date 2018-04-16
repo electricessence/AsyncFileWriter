@@ -7,8 +7,7 @@ namespace AsyncFileWriterTester
 	{
 		static async Task Main(string[] args)
 		{
-			Console.WriteLine("TESTS WITH PARTIAL BLOCKING:");
-			Console.WriteLine();
+			Console.WriteLine("TESTS WITH PARTIAL BLOCKING:\n");
 
 			// The simplest benchmark using lock() and synchronous file writes.
 			await SynchronousTester.TestSynchronizedFileStream();
@@ -20,8 +19,7 @@ namespace AsyncFileWriterTester
 			// await SynchronousTester.TestMultipleFileStreams(); // This simply takes way too long to even report.
 
 			Console.WriteLine();
-			Console.WriteLine("FULLY ASYNCHRONOUS:");
-			Console.WriteLine();
+			Console.WriteLine("FULLY ASYNCHRONOUS:\n");
 
 			await AsyncTester.TestAsyncFileWriter(100000);
 			await AsyncTester.TestAsyncFileWriter(10000);

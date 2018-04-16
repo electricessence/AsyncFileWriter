@@ -55,7 +55,11 @@ namespace AsyncFileWriterTester
 			});
 			sw.Stop();
 
+			var actualBytes = new FileInfo(filePath).Length;
 			var (bytes, time) = telemetry.Aggregate((a, b) => (a.bytes + b.bytes, a.time + b.time));
+
+			Debug.Assert(actualBytes == bytes, "Actual byte count does not match the queued bytes.");
+
 			return (bytes, time, sw.Elapsed);
 		}
 
