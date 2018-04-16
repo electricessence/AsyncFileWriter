@@ -12,6 +12,7 @@ Testing has revealed that using a standard ```fs.Write(bytes)``` on the underlyi
 This may be fixed in future versions of .NET Core/Standard.
 
 ## Current Testing Results
+Total bytes written per test: 116,888,890
 
 ### STANDARD BENCHMARKS:
 
@@ -28,7 +29,6 @@ Total Elapsed Time: 3.1865426 seconds
 #### Synchronized file stream benchmark.
 ```
 Total Time: 3.3883187 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:30.8530035
 ```
 
@@ -37,35 +37,30 @@ Aggregate Waiting: 00:00:30.8530035
 #### 100,000 bounded capacity.
 ```
 Total Time: 2.5057271 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:25.4319344
 ```
 
 #### 10,000 bounded capacity.
 ```
 Total Time: 2.6683573 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:29.6922757
 ```
 
 #### 1,000 bounded capacity.
 ```
 Total Time: 2.5546364 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:54.2961971
 ```
 
 #### 500 bounded capacity.
 ```
 Total Time: 2.9537176 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:39.4386377
 ```
 
 #### 100 bounded capacity.
 ```
 Total Time: 85.4482081 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 02:18:51.5013343
 ```
 
@@ -75,35 +70,30 @@ Aggregate Waiting: 02:18:51.5013343
 #### 100,000 bounded capacity.
 ```
 Total Time: 6.5296874 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:27.9669792
 ```
 
 #### 10,000 bounded capacity.
 ```
 Total Time: 6.7625757 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:31.8351860
 ```
 
 #### 1,000 bounded capacity.
 ```
 Total Time: 10.807509 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:01:01.5740778
 ```
 
 #### 500 bounded capacity.
 ```
 Total Time: 8.198802 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:00:41.9564596
 ```
 
 #### 100 bounded capacity.
 ```
 Total Time: 24.0677165 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:02:27.8041755
 ```
 
@@ -113,34 +103,29 @@ Aggregate Waiting: 00:02:27.8041755
 #### 100,000 bounded capacity.
 ```
 Total Time: 44.2459905 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:04:40.2752856
 ```
 
 #### 10,000 bounded capacity.
 ```
 Total Time: 55.6650965 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:06:13.0226689
 ```
 
 #### 1,000 bounded capacity.
 ```
 Total Time: 53.0426809 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:05:50.5497056
 ```
 
 #### 500 bounded capacity.
 ```
 Total Time: 57.8209485 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:06:24.1047755
 ```
 
 #### 100 bounded capacity.
 ```
 Total Time: 61.7946165 seconds
-Total Bytes: 116,888,890
 Aggregate Waiting: 00:06:49.5865838
 ```
