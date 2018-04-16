@@ -32,7 +32,8 @@ namespace Open
 		/// <param name="encoding">The encoding type to use for transforming strings and characters to bytes.  The default is UTF8.</param>
 		/// <param name="fileSharingMode">The file sharing mode to use.  The default is FileShare.None (will not allow multiple writers). </param>
 		/// <param name="bufferSize">The buffer size to use with the underlying FileStreams.  The default is 4KB. </param>
-		/// <param name="asyncFileStream">If true, uses a fully asynchronous file write scheme with synchronous blocking methods.</param>
+		/// <param name="asyncFileStream">If true, sets the underlying FileStreams to use async mode.</param>\
+		/// <param name="asyncFileWrite">If true, uses a fully asynchronous write scheme.</param>
 		public AsyncFileWriter(
 			string filePath,
 			int boundedCapacity,
