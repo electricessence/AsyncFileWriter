@@ -192,19 +192,20 @@ namespace Open
 			// EnsureInitialized is optimistic.
 			=> LazyInitializer.EnsureInitialized(ref _disposer,
 				// Lazy is pessimistic.
-				() => new Lazy<Task>(() => Task.Run(async () =>
+				() => new Lazy<Task>(() =>
 				{
-					if (calledExplicitly)
+					var c = Complete();
+					if (!calledExplicitly)
 					{
-						await Complete().ConfigureAwait(false);
+						// Being called by the GC.
+						if(!_channel.Reader.Completion.IsCompleted)
+							_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
+						// Not sure what legitimately else can be done here.  Faulting should stop the task.
+
+						c = c.ContinueWith(t => { /* Avoid exceptions propagated to the GC. */ });
 					}
-					else
-					{
-						// Left for the GC? :(
-						_channel.Writer.TryComplete(); // First try and mark as complete as if normal.
-						_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
-					}
-				}))).Value;
+					return c;
+				})).Value;
 
 		public async Task DisposeAsync()
 		{
