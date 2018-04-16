@@ -29,7 +29,7 @@ Total Elapsed Time: 3.1865426 seconds
 ```
 
 #### Synchronized file stream benchmark.
-This test and the following tests use the same test harness and contain +1 second delay time for tesing a full open close and reopen of the underlying file stream.  This is the minimum performance required to meet expecations.  If a test result does not exceed this one's performance (less total time) then it's probably not worth persuing.
+This test and the following tests use the same test harness and contain +1 second delay time for tesing a full open close and reopen of the underlying file stream.  This is the minimum performance required to meet expecations.  If a test result does not exceed this one's performance (less total time) then it's probably not worth pursuing.
 
 ```
 Total Time: 3.3883187 seconds
