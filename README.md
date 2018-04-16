@@ -133,3 +133,7 @@ Aggregate Waiting: 00:06:24.1047755
 Total Time: 61.7946165 seconds
 Aggregate Waiting: 00:06:49.5865838
 ```
+
+## Performance Profile 
+
+![Synchronous vs Asynchronous Behavior](https://i.imgur.com/afhGbrc.png "Synchronous vs Asynchronous Behavior")
