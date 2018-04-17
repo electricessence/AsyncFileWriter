@@ -175,7 +175,7 @@ namespace AsyncFileWriterTester
 			return RunAndReportToConsole((filePath, handler) =>
 			{
 				using (var writer = new AsyncFileWriter(filePath, boundedCapacity))
-					handler(s => writer.AddAsync(s).Wait());
+					handler(s => writer.Add(s));
 			});
 		}
 

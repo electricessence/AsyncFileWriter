@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Channels;
@@ -20,6 +22,7 @@ namespace Open
 		public readonly bool AsyncFileWrite;
 		public readonly int BufferSize;
 
+		readonly byte[] NewlineBytes;
 		bool _declinePermanently;
 		readonly Channel<byte[]> _channel;
 
@@ -50,6 +53,7 @@ namespace Open
 			BufferSize = bufferSize;
 			AsyncFileStream = asyncFileStream;
 			AsyncFileWrite = asyncFileWrite;
+			NewlineBytes = Encoding.GetBytes("\n");
 
 			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
 			Completion = ProcessBytesAsync()
@@ -111,6 +115,10 @@ namespace Open
 		}
 
 		#region Add (queue) data methods.
+
+		byte[] GetNewLineBytes(string s)
+			=> string.IsNullOrEmpty(s) ? NewlineBytes : Encoding.GetBytes(s + '\n');
+
 		void AssertWritable(bool writing)
 		{
 			if (!writing)
@@ -122,67 +130,85 @@ namespace Open
 			}
 		}
 
+		void AssertStillAccepting()
+		{
+			if (_disposer != null) throw new ObjectDisposedException(GetType().ToString());
+			AssertWritable(!_declinePermanently);
+		}
+
+		public bool TryAdd(byte[] bytes)
+			=> _channel.Writer.TryWrite(bytes);
+
+		public void Add(byte[] bytes)
+		{
+			if (!_channel.Writer.TryWrite(bytes))
+				AddAsync(bytes).Wait();
+		}
+
+		public void Add(char[] characters)
+			=> Add(Encoding.GetBytes(characters));
+
+		public void Add(string value)
+			=> Add(Encoding.GetBytes(value));
+
+		public void AddLine(string value = null)
+			=> Add(GetNewLineBytes(value));
+
 		/// <summary>
-		/// Queues bytes for writing to the file.
+		/// Pulls bytes from an enumerable and writes them to the channel.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddAsync(byte[] bytes, params byte[][] more)
+		public async Task AddAsync(IEnumerable<byte[]> bytes)
 		{
 			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
 			Contract.EndContractBlock();
 
-			if (_disposer != null) throw new ObjectDisposedException(GetType().ToString());
-			AssertWritable(!_declinePermanently);
-
-			while (!_channel.Writer.TryWrite(bytes))
+			AssertStillAccepting();
+			foreach (var b in bytes)
 			{
-				var written = await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false);
-				AssertWritable(written);
-			}
+				while (b != null && !_channel.Writer.TryWrite(b))
+				{
+					// Retry?
+					AssertWritable(
+						await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false)
+					);
 
-			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
+					AssertStillAccepting();
+				}
+			}
 		}
+
+		/// <summary>
+		/// Queues bytes for writing to the file.
+		/// If the .Complete() method was called, this will throw an InvalidOperationException.
+		/// </summary>
+		public Task AddAsync(params byte[][] bytes)
+			=> AddAsync((IEnumerable<byte[]>)bytes);
 
 		/// <summary>
 		/// Queues characters for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddAsync(char[] characters, params char[][] more)
-		{
-			if (characters == null) throw new ArgumentNullException(nameof(characters));
-			Contract.EndContractBlock();
-
-			await AddAsync(Encoding.GetBytes(characters));
-
-			if (more.Length != 0) foreach (var v in more) await AddAsync(v);
-		}
+		public Task AddAsync(params char[][] characters)
+			=> AddAsync(characters.Select(c => Encoding.GetBytes(c)));
 
 		/// <summary>
 		/// Queues a string for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddAsync(params string[] values)
-		{
-			if (values == null) throw new ArgumentNullException(nameof(values));
-			Contract.EndContractBlock();
+		public Task AddAsync(params string[] values)
+			=> AddAsync(values.Select(s => Encoding.GetBytes(s)));
 
-			foreach (var value in values)
-			{
-				if (value == null) throw new ArgumentNullException(nameof(value));
-				await AddAsync(Encoding.GetBytes(value));
-			}
-		}
+
 
 		/// <summary>
 		/// Queues a string for writing to the file suffixed with a newline character.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddLineAsync(string line = null, params string[] more)
-		{
-			await AddAsync((line ?? string.Empty) + '\n');
-
-			if (more.Length != 0) foreach (var v in more) await AddLineAsync(v);
-		}
+		public Task AddLineAsync(params string[] values)
+			=> values.Length == 0
+				? AddAsync(NewlineBytes)
+				: AddAsync(values.Select(GetNewLineBytes));
 		#endregion
 
 		#region IDisposable Support
@@ -198,7 +224,7 @@ namespace Open
 					if (!calledExplicitly)
 					{
 						// Being called by the GC.
-						if(!_channel.Reader.Completion.IsCompleted)
+						if (!_channel.Reader.Completion.IsCompleted)
 							_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
 						// Not sure what legitimately else can be done here.  Faulting should stop the task.
 
@@ -231,7 +257,6 @@ namespace Open
 		#endregion
 
 		#region ITargetBlock
-
 		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, byte[] bytes, ISourceBlock<byte[]> source, bool consumeToAccept)
 		{
 			if (_declinePermanently || _channel.Reader.Completion.IsCompleted)
@@ -270,7 +295,6 @@ namespace Open
 			_declinePermanently = true;
 			_channel.Writer.TryComplete(exception);
 		}
-
 		#endregion
 	}
 }
