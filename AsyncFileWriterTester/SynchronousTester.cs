@@ -1,4 +1,4 @@
-﻿using Open;
+﻿using Open.Threading;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -65,7 +65,7 @@ namespace AsyncFileWriterTester
 				var (bytes, time) = telemetry.Aggregate((a, b) => (a.bytes + b.bytes, a.time + b.time));
 
 				Debug.Assert(actualBytes == bytes, $"Actual byte count ({actualBytes}) does not match the queued bytes ({bytes}).");
-				
+
 				return (bytes, time, sw.Elapsed);
 			});
 		}
@@ -151,7 +151,7 @@ namespace AsyncFileWriterTester
 					{
 						lock (sw) sw.Write(s);
 					});
-				}				
+				}
 			});
 		}
 
