@@ -55,7 +55,11 @@ namespace Open.Threading
 			AsyncFileWrite = asyncFileWrite;
 			NewlineBytes = Encoding.GetBytes("\n");
 
-			_channel = Channel.CreateBounded<byte[]>(boundedCapacity);
+			_channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(boundedCapacity)
+			{
+				FullMode = BoundedChannelFullMode.Wait,
+				SingleReader = true
+			});
 			Completion = ProcessBytesAsync()
 				.ContinueWith(
 					t => t.IsCompleted
