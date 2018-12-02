@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -12,19 +9,17 @@ using System.Threading.Tasks.Dataflow;
 namespace Open.Threading
 {
 	public sealed class AsyncFileWriter
-		: IDisposable, ITargetBlock<byte[]>, ITargetBlock<char[]>, ITargetBlock<string>
+		: IDisposable, ITargetBlock<byte[]>
 	{
 		public readonly string FilePath;
 		public readonly int BoundedCapacity;
-		public readonly Encoding Encoding;
 		public readonly FileShare FileShareMode;
 		public readonly bool AsyncFileStream;
 		public readonly bool AsyncFileWrite;
 		public readonly int BufferSize;
 
-		readonly byte[] NewlineBytes;
 		bool _declinePermanently;
-		readonly Channel<byte[]> _channel;
+		readonly Channel<ReadOnlyMemory<byte>> _channel;
 
 		#region Constructors
 		/// <summary>
@@ -32,7 +27,6 @@ namespace Open.Threading
 		/// </summary>
 		/// <param name="filePath">The file system path for the file to open and append to.</param>
 		/// <param name="boundedCapacity">The maximum number of entries to allow before blocking producing threads.</param>
-		/// <param name="encoding">The encoding type to use for transforming strings and characters to bytes.  The default is UTF8.</param>
 		/// <param name="fileSharingMode">The file sharing mode to use.  The default is FileShare.None (will not allow multiple writers). </param>
 		/// <param name="bufferSize">The buffer size to use with the underlying FileStreams.  The default is 4KB. </param>
 		/// <param name="asyncFileStream">If true, sets the underlying FileStreams to use async mode.</param>\
@@ -40,27 +34,27 @@ namespace Open.Threading
 		public AsyncFileWriter(
 			string filePath,
 			int boundedCapacity,
-			Encoding encoding = null,
 			FileShare fileSharingMode = FileShare.None,
 			int bufferSize = 4096,
 			bool asyncFileStream = false,
-			bool asyncFileWrite = false)
+			bool asyncFileWrite = false,
+			CancellationToken cancellationToken = default)
 		{
 			FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
 			BoundedCapacity = boundedCapacity;
-			Encoding = encoding ?? Encoding.UTF8;
+
 			FileShareMode = fileSharingMode;
 			BufferSize = bufferSize;
 			AsyncFileStream = asyncFileStream;
 			AsyncFileWrite = asyncFileWrite;
-			NewlineBytes = Encoding.GetBytes("\n");
 
-			_channel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(boundedCapacity)
+			_channel = Channel.CreateBounded<ReadOnlyMemory<byte>>(new BoundedChannelOptions(boundedCapacity)
 			{
 				FullMode = BoundedChannelFullMode.Wait,
 				SingleReader = true
 			});
-			Completion = ProcessBytesAsync()
+
+			Completion = ProcessBytesAsync(cancellationToken)
 				.ContinueWith(
 					t => t.IsCompleted
 						? _channel.Reader.Completion
@@ -87,31 +81,33 @@ namespace Open.Threading
 		}
 		#endregion
 
-		async Task ProcessBytesAsync()
+		async Task ProcessBytesAsync(CancellationToken cancellationToken)
 		{
 			var reader = _channel.Reader;
-			while (await reader.WaitToReadAsync().ConfigureAwait(false))
+			while (await reader.WaitToReadAsync(cancellationToken))
 			{
 				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: BufferSize, useAsync: AsyncFileStream))
 				{
 					if (AsyncFileWrite)
 					{
-						Task writeTask = Task.CompletedTask;
-						while (reader.TryRead(out byte[] bytes))
+						ValueTask writeTask = new ValueTask(Task.CompletedTask);
+						while (!cancellationToken.IsCancellationRequested
+							&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
 						{
-							await writeTask.ConfigureAwait(false);
-							writeTask = fs.WriteAsync(bytes, 0, bytes.Length);
+							await writeTask;
+							writeTask = fs.WriteAsync(bytes, cancellationToken);
 						}
 
-						await writeTask.ConfigureAwait(false);
+						await writeTask;
 						// FlushAsync here rather than block in Dispose on Flush
-						await fs.FlushAsync().ConfigureAwait(false);
+						await fs.FlushAsync(cancellationToken);
 					}
 					else
 					{
-						while (reader.TryRead(out byte[] bytes))
+						while (!cancellationToken.IsCancellationRequested
+							&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
 						{
-							fs.Write(bytes, 0, bytes.Length);
+							fs.Write(bytes.Span);
 						}
 					}
 				}
@@ -119,10 +115,6 @@ namespace Open.Threading
 		}
 
 		#region Add (queue) data methods.
-
-		byte[] GetNewLineBytes(string s)
-			=> string.IsNullOrEmpty(s) ? NewlineBytes : Encoding.GetBytes(s + '\n');
-
 		void AssertWritable(bool writing)
 		{
 			if (!writing)
@@ -140,79 +132,41 @@ namespace Open.Threading
 			AssertWritable(!_declinePermanently);
 		}
 
-		public bool TryAdd(byte[] bytes)
+		public bool TryAdd(ReadOnlyMemory<byte> bytes)
 			=> _channel.Writer.TryWrite(bytes);
 
-		public void Add(byte[] bytes)
-		{
-			if (!_channel.Writer.TryWrite(bytes))
-				AddAsync(bytes).Wait();
-		}
-
-		public void Add(char[] characters)
-			=> Add(Encoding.GetBytes(characters));
-
-		public void Add(string value)
-			=> Add(Encoding.GetBytes(value));
-
-		public void AddLine(string value = null)
-			=> Add(GetNewLineBytes(value));
-
 		/// <summary>
-		/// Pulls bytes from an enumerable and writes them to the channel.
+		/// Queues bytes for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public async Task AddAsync(IEnumerable<byte[]> bytes)
+		public Task AddAsync(ReadOnlyMemory<byte> bytes)
+			=> _channel.Writer.TryWrite(bytes)
+				? Task.CompletedTask
+				: AddAsyncCore(bytes);
+
+		async Task AddAsyncCore(ReadOnlyMemory<byte> bytes)
 		{
-			if (bytes == null) throw new ArgumentNullException(nameof(bytes));
-			Contract.EndContractBlock();
-
-			AssertStillAccepting();
-			foreach (var b in bytes)
+			do
 			{
-				while (b != null && !_channel.Writer.TryWrite(b))
-				{
-					// Retry?
-					AssertWritable(
-						await _channel.Writer.WaitToWriteAsync().ConfigureAwait(false)
-					);
+				AssertStillAccepting();
 
-					AssertStillAccepting();
-				}
+				// Retry?
+				AssertWritable(
+					await _channel.Writer.WaitToWriteAsync()
+				);
 			}
+			while (!_channel.Writer.TryWrite(bytes));
 		}
 
 		/// <summary>
 		/// Queues bytes for writing to the file.
 		/// If the .Complete() method was called, this will throw an InvalidOperationException.
 		/// </summary>
-		public Task AddAsync(params byte[][] bytes)
-			=> AddAsync((IEnumerable<byte[]>)bytes);
-
-		/// <summary>
-		/// Queues characters for writing to the file.
-		/// If the .Complete() method was called, this will throw an InvalidOperationException.
-		/// </summary>
-		public Task AddAsync(params char[][] characters)
-			=> AddAsync(characters.Select(c => Encoding.GetBytes(c)));
-
-		/// <summary>
-		/// Queues a string for writing to the file.
-		/// If the .Complete() method was called, this will throw an InvalidOperationException.
-		/// </summary>
-		public Task AddAsync(params string[] values)
-			=> AddAsync(values.Select(s => Encoding.GetBytes(s)));
-
-
-
-		/// <summary>
-		/// Queues a string for writing to the file suffixed with a newline character.
-		/// If the .Complete() method was called, this will throw an InvalidOperationException.
-		/// </summary>
-		public Task AddLineAsync(params string[] values)
-			=> values.Length == 0
-				? AddAsync(NewlineBytes)
-				: AddAsync(values.Select(GetNewLineBytes));
+		public void Add(ReadOnlyMemory<byte> bytes)
+		{
+			if (!_channel.Writer.TryWrite(bytes))
+				AddAsyncCore(bytes).Wait();
+		}
 		#endregion
 
 		#region IDisposable Support
@@ -240,7 +194,7 @@ namespace Open.Threading
 		public async Task DisposeAsync()
 		{
 			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			await DisposeAsync(true).ConfigureAwait(false);
+			await DisposeAsync(true);
 			// TODO: uncomment the following line if the finalizer is overridden above.
 			GC.SuppressFinalize(this);
 		}
@@ -276,12 +230,6 @@ namespace Open.Threading
 
 			return DataflowMessageStatus.Declined;
 		}
-
-		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, char[] messageValue, ISourceBlock<char[]> source, bool consumeToAccept)
-			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
-
-		public DataflowMessageStatus OfferMessage(DataflowMessageHeader messageHeader, string messageValue, ISourceBlock<string> source, bool consumeToAccept)
-			=> OfferMessage(messageHeader, Encoding.GetBytes(messageValue), null, false);
 
 		void IDataflowBlock.Complete()
 		{

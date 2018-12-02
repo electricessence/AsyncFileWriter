@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace AsyncFileWriterTester
@@ -26,7 +27,7 @@ namespace AsyncFileWriterTester
 			return filePath;
 		}
 
-		public Task<(int TotalBytesQueued, TimeSpan AggregateTimeWaiting, TimeSpan Elapsed)> Run(Action<string, Action<Action<string>>> context)
+		public Task<(int TotalBytesQueued, TimeSpan AggregateTimeWaiting, TimeSpan Elapsed)> Run(Action<string, Action<Action<ReadOnlyMemory<byte>>>> context)
 		{
 			if (context == null) throw new ArgumentNullException(nameof(context));
 			Contract.EndContractBlock();
@@ -42,7 +43,8 @@ namespace AsyncFileWriterTester
 				{
 					void write(int i)
 					{
-						var message = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
+						var text = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
+						var message = Encoding.UTF8.GetBytes(text);
 						var t = Stopwatch.StartNew();
 						writeHandler(message);
 						telemetry.Add((message.Length, t.Elapsed));
@@ -70,7 +72,7 @@ namespace AsyncFileWriterTester
 			});
 		}
 
-		public static async Task RunAndReportToConsole(Action<string, Action<Action<string>>> context, string fileName = "AsyncFileWriterTest.txt")
+		public static async Task RunAndReportToConsole(Action<string, Action<Action<ReadOnlyMemory<byte>>>> context, string fileName = "AsyncFileWriterTest.txt")
 			=> (await new SynchronousTester(fileName).Run(context)).EmitToConsole();
 
 		public static Task TestFileStreamSingleThread()
@@ -80,7 +82,7 @@ namespace AsyncFileWriterTester
 			return new SynchronousTester().Run((filePath, handler) =>
 			{
 				// Reuse testing method.
-				var queue = new ConcurrentQueue<string>();
+				var queue = new ConcurrentQueue<ReadOnlyMemory<byte>>();
 				handler(s => queue.Enqueue(s));
 				var a = queue.ToArray();
 				var len = a.Length;
@@ -88,10 +90,9 @@ namespace AsyncFileWriterTester
 
 				sw.Start();
 				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
-				using (var writer = new StreamWriter(fs))
 				{
 					for (var i = 0; i < len; i++)
-						writer.Write(a[i]);
+						fs.Write(a[i].Span);
 				}
 				sw.Stop();
 			})
@@ -110,7 +111,7 @@ namespace AsyncFileWriterTester
 			return new SynchronousTester().Run((filePath, handler) =>
 			{
 				// Reuse testing method.
-				var queue = new ConcurrentQueue<string>();
+				var queue = new ConcurrentQueue<ReadOnlyMemory<byte>>();
 				handler(s => queue.Enqueue(s));
 				var a = queue.ToArray();
 				var len = a.Length;
@@ -120,13 +121,11 @@ namespace AsyncFileWriterTester
 				{
 					sw.Start();
 					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
-					using (var writer = new StreamWriter(fs))
 					{
 						for (var i = 0; i < len; i++)
-							await writer.WriteAsync(a[i]).ConfigureAwait(false);
+							await fs.WriteAsync(a[i]);
 
-						await writer.FlushAsync().ConfigureAwait(false);
-						await fs.FlushAsync().ConfigureAwait(false);
+						await fs.FlushAsync();
 					}
 					sw.Stop();
 				}).Wait();
@@ -145,11 +144,11 @@ namespace AsyncFileWriterTester
 			return RunAndReportToConsole((filePath, handler) =>
 			{
 				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
-				using (var sw = new StreamWriter(fs))
 				{
 					handler(s =>
 					{
-						lock (sw) sw.Write(s);
+						lock (fs)
+							fs.Write(s.Span);
 					});
 				}
 			});
@@ -163,8 +162,7 @@ namespace AsyncFileWriterTester
 				handler(s =>
 				{
 					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Write))
-					using (var sw = new StreamWriter(fs))
-						sw.Write(s);
+						fs.Write(s.Span);
 				});
 			});
 		}

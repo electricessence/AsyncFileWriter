@@ -26,7 +26,7 @@ namespace AsyncFileWriterTester
 		private static async Task ForAsyncPartition(int fromInclusive, int toExclusive, Func<int, Task> bodyAsync)
 		{
 			for (var i = fromInclusive; i < toExclusive; i++)
-				await bodyAsync(i).ConfigureAwait(false);
+				await bodyAsync(i);
 		}
 	}
 }

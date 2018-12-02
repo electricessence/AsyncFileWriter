@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace AsyncFileWriterTester
@@ -18,7 +19,7 @@ namespace AsyncFileWriterTester
 			FileName = fileName ?? throw new ArgumentNullException(nameof(fileName));
 		}
 
-		public async Task<(int TotalBytesQueued, TimeSpan AggregateTimeWaiting, TimeSpan Elapsed)> Run(Func<string, Func<Func<string, Task>, Task>, Task> context)
+		public async Task<(int TotalBytesQueued, TimeSpan AggregateTimeWaiting, TimeSpan Elapsed)> Run(Func<string, Func<Func<ReadOnlyMemory<byte>, Task>, Task>, Task> context)
 		{
 			if (context == null) throw new ArgumentNullException(nameof(context));
 			Contract.EndContractBlock();
@@ -34,7 +35,8 @@ namespace AsyncFileWriterTester
 			{
 				async Task write(int i)
 				{
-					var message = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
+					var text = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
+					var message = Encoding.UTF8.GetBytes(text);
 					var t = Stopwatch.StartNew();
 					await writeHandler(message);
 					telemetry.Add((message.Length, t.Elapsed));
@@ -61,7 +63,7 @@ namespace AsyncFileWriterTester
 			return (bytes, time, sw.Elapsed);
 		}
 
-		public static async Task RunAndReportToConsole(Func<string, Func<Func<string, Task>, Task>, Task> context, string fileName = "AsyncFileWriterTest.txt")
+		public static async Task RunAndReportToConsole(Func<string, Func<Func<ReadOnlyMemory<byte>, Task>, Task>, Task> context, string fileName = "AsyncFileWriterTest.txt")
 			=> (await new AsyncTester(fileName).Run(context)).EmitToConsole();
 
 		public static Task TestAsyncFileWriter(int boundedCapacity, bool asyncFileWrite)
