@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.IO;
 using System.Threading;
@@ -54,12 +55,7 @@ namespace Open.Threading
 				SingleReader = true
 			});
 
-			Completion = ProcessBytesAsync(cancellationToken)
-				.ContinueWith(
-					t => t.IsCompleted
-						? _channel.Reader.Completion
-						: t)
-				.Unwrap(); // Propagate the task state...
+			Completion = ProcessBytesAsync(cancellationToken);
 		}
 
 		#endregion
@@ -83,6 +79,21 @@ namespace Open.Threading
 
 		async Task ProcessBytesAsync(CancellationToken cancellationToken)
 		{
+			try
+			{
+				await ProcessBytesAsyncCore(cancellationToken);
+			}
+			catch(Exception ex)
+			{
+				_channel.Writer.TryComplete(ex);
+				throw;
+			}
+
+			await _channel.Reader.Completion;
+		}
+
+		async Task ProcessBytesAsyncCore(CancellationToken cancellationToken)
+		{
 			var reader = _channel.Reader;
 			while (await reader.WaitToReadAsync(cancellationToken))
 			{
@@ -99,8 +110,6 @@ namespace Open.Threading
 						}
 
 						await writeTask;
-						// FlushAsync here rather than block in Dispose on Flush
-						await fs.FlushAsync(cancellationToken);
 					}
 					else
 					{
@@ -110,6 +119,9 @@ namespace Open.Threading
 							fs.Write(bytes.Span);
 						}
 					}
+
+					// FlushAsync here rather than block in Dispose on Flush
+					await fs.FlushAsync(cancellationToken);
 				}
 			}
 		}

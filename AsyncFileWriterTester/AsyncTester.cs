@@ -35,8 +35,7 @@ namespace AsyncFileWriterTester
 			{
 				async Task write(int i)
 				{
-					var text = $"{i}) {DateTime.Now} 00000000000000000000000000000000111111111111111111111111111222222222222222222222222222\n";
-					var message = Encoding.UTF8.GetBytes(text);
+					var message = SourceBuilder.Source[i];
 					var t = Stopwatch.StartNew();
 					await writeHandler(message);
 					telemetry.Add((message.Length, t.Elapsed));
