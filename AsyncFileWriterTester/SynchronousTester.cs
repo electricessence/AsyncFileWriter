@@ -34,9 +34,10 @@ namespace AsyncFileWriterTester
 			if (context == null) throw new ArgumentNullException(nameof(context));
 			Contract.EndContractBlock();
 
-			return Task.Run(() =>
+			return Task.Run(async () =>
 			{
 				var filePath = Setup();
+				await Task.Delay(1000); // Give it some time.
 
 				var telemetry = new ConcurrentBag<(int bytes, TimeSpan time)>();
 
@@ -45,7 +46,7 @@ namespace AsyncFileWriterTester
 				{
 					void write(int i)
 					{
-						var message = SourceBuilder.Source[i];
+						var message = SourceBuilder.GetLine(i);
 						var t = Stopwatch.StartNew();
 						writeHandler(message);
 						telemetry.Add((message.Length, t.Elapsed));
@@ -69,6 +70,7 @@ namespace AsyncFileWriterTester
 
 				Debug.Assert(actualBytes == bytes, $"Actual byte count ({actualBytes}) does not match the queued bytes ({bytes}).");
 
+				await Task.Delay(1);
 				return (bytes, time, sw.Elapsed);
 			});
 		}
@@ -84,16 +86,13 @@ namespace AsyncFileWriterTester
 			{
 				// Reuse testing method.
 				var queue = new ConcurrentQueue<ReadOnlyMemory<byte>>();
-				handler(s => queue.Enqueue(s));
-				var a = queue.ToArray();
-				var len = a.Length;
-				queue.Clear();
-
 				sw.Start();
+				handler(s => queue.Enqueue(s));
+
 				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
 				{
-					for (var i = 0; i < len; i++)
-						fs.Write(a[i].Span);
+					while (queue.TryDequeue(out var entry))
+						fs.Write(entry.Span);
 				}
 				sw.Stop();
 			})
@@ -111,20 +110,17 @@ namespace AsyncFileWriterTester
 			var sw = new Stopwatch();
 			return new SynchronousTester().Run((filePath, handler) =>
 			{
-				// Reuse testing method.
-				var queue = new ConcurrentQueue<ReadOnlyMemory<byte>>();
-				handler(s => queue.Enqueue(s));
-				var a = queue.ToArray();
-				var len = a.Length;
-				queue.Clear();
-
 				Task.Run(async () =>
 				{
+					var queue = new ConcurrentQueue<ReadOnlyMemory<byte>>();
 					sw.Start();
+					// Reuse testing method.
+					handler(s => queue.Enqueue(s));
+
 					using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None, 4096, true))
 					{
-						for (var i = 0; i < len; i++)
-							await fs.WriteAsync(a[i]);
+						while (queue.TryDequeue(out var entry))
+							await fs.WriteAsync(entry);
 
 						await fs.FlushAsync();
 					}
@@ -151,6 +147,25 @@ namespace AsyncFileWriterTester
 						lock (fs)
 							fs.Write(s.Span);
 					});
+				}
+			});
+		}
+
+		public static Task TestBlockingCollection(int boundedCapacity)
+		{
+			Console.WriteLine("{0:#,##0} BlockingCollection queued benchmark.", boundedCapacity);
+			return RunAndReportToConsole((filePath, handler) =>
+			{
+				var queue = new BlockingCollection<ReadOnlyMemory<byte>>(boundedCapacity);
+				Task.Run(() =>
+				{
+					handler(s => queue.Add(s));
+					queue.CompleteAdding();
+				});
+				using (var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.None))
+				{
+					foreach (var s in queue.GetConsumingEnumerable())
+						fs.Write(s.Span);
 				}
 			});
 		}

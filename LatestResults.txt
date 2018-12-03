@@ -1,0 +1,61 @@
+STANDARD BENCHMARKS:
+
+File stream standard benchmark.
+Total Elapsed Time: 1.8994005 seconds
+------------------------
+
+Synchronized file stream benchmark.
+Total Time: 1.6911277 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:03.6219495
+------------------------
+
+TESTS WITH PARTIAL BLOCKING:
+
+150,000 BlockingCollection queued benchmark.
+Total Time: 1.9066117 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:01.8377548
+------------------------
+
+150,000 bounded capacity.
+Total Time: 2.8085457 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:10.0840823
+------------------------
+
+100,000 BlockingCollection queued benchmark.
+Total Time: 2.0116308 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:01.9312396
+------------------------
+
+100,000 bounded capacity.
+Total Time: 2.2340504 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:14.3782481
+------------------------
+
+50,000 BlockingCollection queued benchmark.
+Total Time: 2.0616825 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:07.4741103
+------------------------
+
+50,000 bounded capacity.
+Total Time: 1.9812716 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:01.5531377
+------------------------
+
+10,000 BlockingCollection queued benchmark.
+Total Time: 1.7345184 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:00:01.6600510
+------------------------
+
+10,000 bounded capacity.
+Total Time: 4.6379626 seconds
+Total Bytes: 115,888,890
+Aggregate Waiting: 00:01:06.4975673
+------------------------

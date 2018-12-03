@@ -27,6 +27,7 @@ namespace AsyncFileWriterTester
 			var dir = Environment.CurrentDirectory;
 			var filePath = Path.Combine(dir, FileName);
 			File.Delete(filePath); // Start from scratch. (comment out for further appends.)
+			await Task.Delay(1000); // Give it some time.
 
 			var telemetry = new ConcurrentBag<(int bytes, TimeSpan time)>();
 
@@ -35,7 +36,7 @@ namespace AsyncFileWriterTester
 			{
 				async Task write(int i)
 				{
-					var message = SourceBuilder.Source[i];
+					var message = SourceBuilder.GetLine(i);
 					var t = Stopwatch.StartNew();
 					await writeHandler(message);
 					telemetry.Add((message.Length, t.Elapsed));
@@ -59,6 +60,7 @@ namespace AsyncFileWriterTester
 
 			Debug.Assert(actualBytes == bytes, "Actual byte count does not match the queued bytes.");
 
+			await Task.Delay(1);
 			return (bytes, time, sw.Elapsed);
 		}
 

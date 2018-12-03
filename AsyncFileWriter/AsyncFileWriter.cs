@@ -19,6 +19,7 @@ namespace Open.Threading
 		public readonly bool AsyncFileWrite;
 		public readonly int BufferSize;
 
+		readonly Task<FileStream> _fileStream;
 		bool _declinePermanently;
 		readonly Channel<ReadOnlyMemory<byte>> _channel;
 
@@ -49,6 +50,8 @@ namespace Open.Threading
 			AsyncFileStream = asyncFileStream;
 			AsyncFileWrite = asyncFileWrite;
 
+			_fileStream = TryGetFileStream();
+
 			_channel = Channel.CreateBounded<ReadOnlyMemory<byte>>(new BoundedChannelOptions(boundedCapacity)
 			{
 				FullMode = BoundedChannelFullMode.Wait,
@@ -56,7 +59,38 @@ namespace Open.Threading
 			});
 
 			Completion = ProcessBytesAsync(cancellationToken);
+
 		}
+
+		async Task<FileStream> TryGetFileStream()
+		{
+			byte tries = 0;
+			const byte maxTries = 5;
+			while (true)
+			{
+				tries++;
+
+				try
+				{
+					return new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: BufferSize, useAsync: AsyncFileStream);
+				}
+				catch (UnauthorizedAccessException uaex)
+				{
+					Debug.WriteLine(uaex);
+					if (tries == maxTries)
+						throw;
+				}
+				catch (IOException ioex)
+				{
+					Debug.WriteLine(ioex);
+					if (tries == maxTries)
+						throw;
+				}
+
+				await Task.Delay(100 * tries); // up to 1 second of total wait time (maxTries=5).
+			}
+		}
+
 
 		#endregion
 
@@ -79,50 +113,56 @@ namespace Open.Threading
 
 		async Task ProcessBytesAsync(CancellationToken cancellationToken)
 		{
+			Exception fault = null;
 			try
 			{
 				await ProcessBytesAsyncCore(cancellationToken);
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
-				_channel.Writer.TryComplete(ex);
+				fault = ex; // Defer faulting the writer to ensure actual exception is thrown before potentially causing another one.
 				throw;
 			}
+			finally
+			{
+				if (fault != null)
+					_channel.Writer.TryComplete(fault);
 
-			await _channel.Reader.Completion;
+				if (_fileStream.IsCompletedSuccessfully)
+					_fileStream.Result.Dispose();
+			}
+
 		}
 
 		async Task ProcessBytesAsyncCore(CancellationToken cancellationToken)
 		{
+			var fs = await _fileStream;
 			var reader = _channel.Reader;
 			while (await reader.WaitToReadAsync(cancellationToken))
 			{
-				using (var fs = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShareMode, bufferSize: BufferSize, useAsync: AsyncFileStream))
+				if (AsyncFileWrite)
 				{
-					if (AsyncFileWrite)
+					ValueTask writeTask = new ValueTask(Task.CompletedTask);
+					while (!cancellationToken.IsCancellationRequested
+						&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
 					{
-						ValueTask writeTask = new ValueTask(Task.CompletedTask);
-						while (!cancellationToken.IsCancellationRequested
-							&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
-						{
-							await writeTask;
-							writeTask = fs.WriteAsync(bytes, cancellationToken);
-						}
-
 						await writeTask;
-					}
-					else
-					{
-						while (!cancellationToken.IsCancellationRequested
-							&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
-						{
-							fs.Write(bytes.Span);
-						}
+						writeTask = fs.WriteAsync(bytes, cancellationToken);
 					}
 
-					// FlushAsync here rather than block in Dispose on Flush
-					await fs.FlushAsync(cancellationToken);
+					await writeTask;
 				}
+				else
+				{
+					while (!cancellationToken.IsCancellationRequested
+						&& reader.TryRead(out ReadOnlyMemory<byte> bytes))
+					{
+						fs.Write(bytes.Span);
+					}
+				}
+
+				// FlushAsync here rather than block in Dispose on Flush
+				await fs.FlushAsync(cancellationToken);
 			}
 		}
 
@@ -198,7 +238,11 @@ namespace Open.Threading
 							_channel.Writer.TryComplete(new ObjectDisposedException(GetType().ToString()));
 						// Not sure what legitimately else can be done here.  Faulting should stop the task.
 
-						c = c.ContinueWith(t => { /* Avoid exceptions propagated to the GC. */ });
+						c = c.ContinueWith(t =>
+						{
+							Debug.WriteLineIf(t.IsFaulted, t.Exception);
+							/* Avoid exceptions propagated to the GC. */
+						});
 					}
 					return c;
 				})).Value;
